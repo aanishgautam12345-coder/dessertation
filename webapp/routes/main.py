@@ -78,8 +78,31 @@ def _saved_feed(db: Session, user_id, limit: int = 20) -> list:
         return []
 
 
-def _recent_feed(db: Session, limit: int = 15) -> list:
-    """Fallback: most recently added jobs."""
+def _recent_feed(db: Session, limit: int = 15, profile: UserProfile | None = None) -> list:
+    """Most recent active jobs, ranked by profile similarity when available."""
+    if profile and profile.profile_embedding is not None:
+        try:
+            stmt = text("""
+                SELECT j.id, j.title, j.title_clean, j.company,
+                       j.location_city, j.location_country, j.remote,
+                       j.salary_min, j.salary_max, j.salary_currency,
+                       j.category, j.job_type, j.url, j.source, j.created_at,
+                       (1 - (j.embedding <=> :profile_vec)) AS similarity
+                FROM jobs j
+                WHERE j.embedding IS NOT NULL
+                  AND j.is_active = true
+                ORDER BY j.created_at DESC, j.embedding <=> :profile_vec
+                LIMIT :lim
+            """)
+            rows = db.execute(stmt, {
+                "profile_vec": str(profile.profile_embedding),
+                "lim": limit,
+            }).fetchall()
+            if rows:
+                return rows
+        except Exception:
+            pass
+
     return db.query(Job).order_by(Job.created_at.desc()).limit(limit).all()
 
 
@@ -144,7 +167,7 @@ def index():
 
         # 3) Recent jobs (fallback)
         if not feed_jobs:
-            feed_jobs = _recent_feed(db, limit=15)
+            feed_jobs = _recent_feed(db, limit=15, profile=profile)
             feed_source = "recent"
 
         return render_template(

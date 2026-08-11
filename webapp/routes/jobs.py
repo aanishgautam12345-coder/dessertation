@@ -327,7 +327,31 @@ def saved():
 def recent():
     db = SessionLocal()
     try:
-        jobs = db.query(Job).filter(Job.is_active.is_(True)).order_by(Job.created_at.desc()).limit(30).all()
+        profile = db.query(UserProfile).filter(
+            UserProfile.user_id == current_user.id
+        ).first()
+
+        if profile and profile.profile_embedding is not None:
+            try:
+                from sqlalchemy import text as sql_text
+                stmt = sql_text("""
+                    SELECT j.id, j.title, j.title_clean, j.company,
+                           j.location_city, j.location_country, j.remote,
+                           j.salary_min, j.salary_max, j.salary_currency,
+                           j.category, j.job_type, j.url, j.source, j.created_at,
+                           (1 - (j.embedding <=> :profile_vec)) AS similarity
+                    FROM jobs j
+                    WHERE j.embedding IS NOT NULL
+                      AND j.is_active = true
+                    ORDER BY j.created_at DESC, j.embedding <=> :profile_vec
+                    LIMIT 30
+                """)
+                jobs = db.execute(stmt, {"profile_vec": str(profile.profile_embedding)}).fetchall()
+            except Exception:
+                jobs = db.query(Job).filter(Job.is_active.is_(True)).order_by(Job.created_at.desc()).limit(30).all()
+        else:
+            jobs = db.query(Job).filter(Job.is_active.is_(True)).order_by(Job.created_at.desc()).limit(30).all()
+
         saved_ids = {
             str(s.job_id) for s in
             db.query(SavedJob).filter(SavedJob.user_id == current_user.id).all()
