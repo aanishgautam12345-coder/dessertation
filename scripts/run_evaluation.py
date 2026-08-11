@@ -1,12 +1,6 @@
-"""Evaluation Harness — Semantic Search vs Keyword Search.
-
-This is your dissertation's core evaluation methodology, executable:
-    1. Runs a set of test queries against both search methods
-    2. Lets you (the researcher) label each unique result with GRADED relevance
-       — labels are SAVED, so you only judge each query/job pair once
-    3. Computes Precision@k, MAP, MRR, and nDCG@k per method
-    4. Exports a results table (CSV + Markdown) ready to paste into
-       your dissertation's Results/Evaluation chapter
+"""Compares semantic search against keyword search on a fixed query set. You label
+each result's relevance once (saved to disk, so re-runs don't re-ask), then it
+computes Precision@k, MAP, MRR and nDCG@k per method and exports CSV + Markdown.
 
 Relevance scale:
     0 = Not relevant
@@ -248,7 +242,7 @@ def main():
     db = SessionLocal()
     try:
         print("\n" + "="*70)
-        print("  JobMatch AI - Evaluation Harness")
+        print("  JobMatch - Evaluation Harness")
         print("="*70)
         print(f"  {len(TEST_QUERIES)} test queries")
         print(f"  Labels file: {LABELS_FILE}")

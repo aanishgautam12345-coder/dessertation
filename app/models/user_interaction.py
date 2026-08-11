@@ -1,4 +1,4 @@
-"""User Interaction — tracks user actions on job listings.
+﻿"""User Interaction - tracks user actions on job listings.
 
 Captures implicit and explicit feedback signals for future model improvement:
 impressions, views, saves, dismissals, applications, and relevance judgments.

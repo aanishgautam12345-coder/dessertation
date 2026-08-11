@@ -1,5 +1,11 @@
-{% extends "base.html" %}
-{% block title %}Recommendations — JobMatch AI{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}Recommendations - JobMatch{% endblock %}
+
+{% macro logo(name, cls="company-logo") -%}
+{%- set colors = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#34495e','#16a085','#c0392b','#2980b9','#8e44ad'] -%}
+{%- set idx = (name|default('?',true)|list|map('ord')|sum) % colors|length -%}
+<div class="{{ cls }}" style="background:{{ colors[idx] }}">{{ name|default('?',true)|truncate(2,true,'')|upper }}</div>
+{%- endmacro %}
 
 {% block content %}
 <div class="max-w-[1128px] mx-auto px-4 py-6">
@@ -33,6 +39,54 @@
             {% elif recs is none or recs|length == 0 %}
             <div class="li-card p-8 text-center text-[#999589]">No recommendations found. Try broadening your profile preferences.</div>
             {% else %}
+
+            <!-- Match Score Overview -->
+            <div class="li-card p-5 mb-4">
+                <div class="text-sm font-semibold text-[#000000e6] mb-3">Match Score Overview</div>
+                <div class="grid grid-cols-3 gap-4 mb-4 text-center">
+                    <div>
+                        <div class="text-2xl font-bold text-[#000000e6]">{{ overview.average }}%</div>
+                        <div class="text-[11px] text-[#999589] uppercase tracking-wide">Average match</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-[#155724]">{{ overview.highest }}%</div>
+                        <div class="text-[11px] text-[#999589] uppercase tracking-wide">Highest</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-[#66615b]">{{ overview.lowest }}%</div>
+                        <div class="text-[11px] text-[#999589] uppercase tracking-wide">Lowest</div>
+                    </div>
+                </div>
+                <div class="space-y-1.5">
+                    {% for band, count in overview.bands.items() %}
+                    <div class="flex items-center gap-2 text-xs">
+                        <span class="w-16 shrink-0 text-[#66615b]">{{ band }}</span>
+                        <div class="flex-1 bg-[#f3f2ef] rounded h-4 overflow-hidden">
+                            {% if count > 0 %}
+                            <div class="bg-brand-500 h-4 rounded" style="width: {{ (count / overview.max_band_count * 100)|round(0)|int }}%; background-color:#2563eb;"></div>
+                            {% endif %}
+                        </div>
+                        <span class="w-6 text-right text-[#000000e6] font-medium">{{ count }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Recommendation Insights -->
+            <div class="li-card p-5 mb-4">
+                <div class="text-sm font-semibold text-[#000000e6] mb-1">Recommendation Insights</div>
+                <p class="text-xs text-[#999589] mb-3">Skills that would improve your matches most</p>
+                {% if overview.top_missing_skills %}
+                <div class="flex flex-wrap gap-2">
+                    {% for skill, count in overview.top_missing_skills %}
+                    <span class="tag text-[11px]">{{ skill }} <span class="text-[#999589]">×{{ count }}</span></span>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-xs text-[#155724]">Your profile already matches all required skills across your current recommendations.</div>
+                {% endif %}
+            </div>
+
             <div class="space-y-3">
                 {% for rec in recs %}
                 <div class="li-card p-5 hover:shadow-md transition-shadow">

@@ -1,4 +1,4 @@
-"""Auth dependency — extracts the current user from the Authorization header."""
+﻿"""Auth dependency - extracts the current user from the Authorization header."""
 
 import logging
 import uuid
@@ -21,7 +21,7 @@ def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    """FastAPI dependency — inject the authenticated user into any endpoint."""
+    """FastAPI dependency - inject the authenticated user into any endpoint."""
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(

@@ -1,4 +1,4 @@
-"""Database configuration for JobMatch AI.
+﻿"""Database configuration for JobMatch.
 
 Uses SQLAlchemy 2.0 with PostgreSQL + pgvector.
 
@@ -24,7 +24,7 @@ class Base(DeclarativeBase):
 
 
 def get_db():
-    """FastAPI dependency — yields a DB session, auto-closes."""
+    """FastAPI dependency - yields a DB session, auto-closes."""
     db = SessionLocal()
     try:
         yield db
@@ -39,8 +39,13 @@ def init_db():
     Alembic migrations: `alembic upgrade head`
     """
     with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        conn.commit()
+        try:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
+            logger.info("pgvector extension enabled")
+        except Exception as e:
+            logger.warning(f"pgvector extension not available: {e}. Vector features will be limited.")
+            conn.rollback()
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created")
 

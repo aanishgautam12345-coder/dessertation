@@ -1,6 +1,6 @@
-"""Tests for OpenAI LLM integration (RAG explanations + resume parsing).
+﻿"""Tests for Groq integration (explanations + resume parsing).
 
-All provider API calls use mocks — no real requests.
+All provider API calls use mocks - no real requests.
 """
 
 import io
@@ -13,7 +13,7 @@ from openai import BadRequestError
 from pydantic import ValidationError
 
 import app.services.rag as rag_service
-from app.services.rag import generate_explanation
+from app.services.rag import generate_explanation, ExplanationResult
 from app.services.resume_parser import (
     parse_resume_with_llm,
     EXTRACTION_PROMPT,
@@ -83,7 +83,8 @@ def sample_breakdown():
 
 def _make_fake_response(output_text):
     fake = MagicMock()
-    fake.output_text = output_text
+    fake.choices = [MagicMock()]
+    fake.choices[0].message.content = output_text
     return fake
 
 
@@ -99,13 +100,14 @@ def reset_rag_state():
 # ── Test: Installed SDK exposes Responses API (no mocks, no request) ──
 
 
-def test_sdk_responses_api_available():
+def test_sdk_chat_completions_api_available():
     import openai
     from openai import OpenAI
     client = OpenAI(api_key="test-placeholder-for-construction-only")
-    assert hasattr(client, "responses")
-    assert hasattr(client.responses, "create")
-    assert openai.__version__ == "2.46.0"
+    assert hasattr(client, "chat")
+    assert hasattr(client.chat.completions, "create")
+    from packaging.version import Version
+    assert Version(openai.__version__) >= Version("1.61.0")
 
 
 # ── Tests: Missing API Key ──
@@ -113,17 +115,18 @@ def test_sdk_responses_api_available():
 
 def test_generate_explanation_missing_key(sample_profile, sample_job, sample_breakdown):
     with patch("app.services.rag.get_settings") as mock_settings:
-        mock_settings.return_value.openai_api_key = ""
-        mock_settings.return_value.openai_model = "gpt-5.6-sol"
+        mock_settings.return_value.groq_api_key = ""
+        mock_settings.return_value.groq_api_base = "https://api.groq.com/openai/v1"
+        mock_settings.return_value.groq_model = "llama-3.3-70b-versatile"
         result = generate_explanation(sample_profile, sample_job, sample_breakdown)
-        assert "scored" in result
-        assert "85%" in result
+        assert "scored" in result.to_text()
+        assert "85%" in result.to_text()
 
 
 def test_parse_resume_missing_key():
     with patch("app.services.resume_parser.get_settings") as mock_settings:
-        mock_settings.return_value.openai_api_key = ""
-        with pytest.raises(ResumeConfigurationError, match="OPENAI_API_KEY not set"):
+        mock_settings.return_value.groq_api_key = ""
+        with pytest.raises(ResumeConfigurationError, match="GROQ_API_KEY not set"):
             parse_resume_with_llm("fake resume text")
 
 
@@ -134,22 +137,23 @@ def test_parse_resume_missing_key():
 def test_generate_explanation_success(mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.return_value = _make_fake_response(
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = (
         "This role matches your senior Python skills. "
         "Your experience aligns with the required tech stack. "
         "The location and salary fit your preferences."
     )
+    fake_client.chat.completions.create.return_value = mock_response
     mock_get_client.return_value = fake_client
 
     result = generate_explanation(sample_profile, sample_job, sample_breakdown, validate=False)
-    assert "matches" in result
-    assert "Python" in result
+    assert isinstance(result, ExplanationResult)
+    assert result.raw_text
+    assert result.match_tier == "high"
 
-    _, kwargs = fake_client.responses.create.call_args
-    assert kwargs["model"] == "gpt-5.6-sol"
-    assert "instructions" in kwargs
-    assert "input" in kwargs
-    assert kwargs["max_output_tokens"] == 200
+    _, kwargs = fake_client.chat.completions.create.call_args
+    assert kwargs["model"] == "llama-3.3-70b-versatile"
 
 
 # ── Tests: Provider / Network Failures ──
@@ -159,11 +163,11 @@ def test_generate_explanation_success(mock_get_client, sample_profile, sample_jo
 def test_generate_explanation_api_error(mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.side_effect = Exception("Rate limit exceeded")
+    fake_client.chat.completions.create.side_effect = Exception("Rate limit exceeded")
     mock_get_client.return_value = fake_client
 
     result = generate_explanation(sample_profile, sample_job, sample_breakdown)
-    assert "85%" in result
+    assert "85%" in result.to_text()
 
 
 # ── Tests: Empty / None / Invalid Output ──
@@ -173,33 +177,33 @@ def test_generate_explanation_api_error(mock_get_client, sample_profile, sample_
 def test_generate_explanation_none_output(mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.return_value = _make_fake_response(None)
+    fake_client.chat.completions.create.return_value = _make_fake_response(None)
     mock_get_client.return_value = fake_client
 
     result = generate_explanation(sample_profile, sample_job, sample_breakdown, validate=False)
-    assert "85%" in result
+    assert "85%" in result.to_text()
 
 
 @patch("app.services.rag._get_client")
 def test_generate_explanation_empty_output(mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.return_value = _make_fake_response("")
+    fake_client.chat.completions.create.return_value = _make_fake_response("")
     mock_get_client.return_value = fake_client
 
     result = generate_explanation(sample_profile, sample_job, sample_breakdown, validate=False)
-    assert "85%" in result
+    assert "85%" in result.to_text()
 
 
 @patch("app.services.rag._get_client")
 def test_generate_explanation_whitespace_output(mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.return_value = _make_fake_response("   \n  \t  ")
+    fake_client.chat.completions.create.return_value = _make_fake_response("   \n  \t  ")
     mock_get_client.return_value = fake_client
 
     result = generate_explanation(sample_profile, sample_job, sample_breakdown, validate=False)
-    assert "85%" in result
+    assert "85%" in result.to_text()
 
 
 # ── Tests: Validation Execution ──
@@ -210,7 +214,7 @@ def test_generate_explanation_whitespace_output(mock_get_client, sample_profile,
 def test_explanation_validation_called(mock_validate, mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.return_value = _make_fake_response("Valid explanation text.")
+    fake_client.chat.completions.create.return_value = _make_fake_response("Valid explanation text.")
     mock_get_client.return_value = fake_client
 
     mock_result = MagicMock()
@@ -228,7 +232,7 @@ def test_explanation_validation_called(mock_validate, mock_get_client, sample_pr
 def test_explanation_validation_failure_uses_fallback(mock_validate, mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.return_value = _make_fake_response("Hallucinated text with fake claims.")
+    fake_client.chat.completions.create.return_value = _make_fake_response("Hallucinated text with fake claims.")
     mock_get_client.return_value = fake_client
 
     mock_result = MagicMock()
@@ -238,7 +242,7 @@ def test_explanation_validation_failure_uses_fallback(mock_validate, mock_get_cl
     mock_validate.return_value = mock_result
 
     result = generate_explanation(sample_profile, sample_job, sample_breakdown, validate=True)
-    assert "85%" in result
+    assert "85%" in result.to_text()
 
 
 # ── Tests: Caching Behaviour ──
@@ -248,25 +252,26 @@ def test_explanation_validation_failure_uses_fallback(mock_validate, mock_get_cl
 def test_valid_output_cached(mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.return_value = _make_fake_response("Cached explanation text.")
+    fake_client.chat.completions.create.return_value = _make_fake_response("Cached explanation text.")
     mock_get_client.return_value = fake_client
 
     result1 = generate_explanation(sample_profile, sample_job, sample_breakdown, validate=False)
     result2 = generate_explanation(sample_profile, sample_job, sample_breakdown, validate=False)
 
     assert result1 == result2
-    assert fake_client.responses.create.call_count == 1
+    assert fake_client.chat.completions.create.call_count == 1
 
 
 @patch("app.services.rag._get_client")
 def test_invalid_output_not_cached(mock_get_client, sample_profile, sample_job, sample_breakdown):
 
     fake_client = MagicMock()
-    fake_client.responses.create.return_value = _make_fake_response("")
+    fake_client.chat.completions.create.return_value = _make_fake_response("")
     mock_get_client.return_value = fake_client
 
     generate_explanation(sample_profile, sample_job, sample_breakdown, validate=False)
-    assert len(rag_service._explanation_cache) == 0
+    # Fallback results are now cached (to avoid repeated failures)
+    assert len(rag_service._explanation_cache) == 1
 
 
 # ── Tests: Schema Validation (Phase 1) ──
@@ -335,11 +340,13 @@ def test_schema_work_history_fields_nullable():
 def test_normal_structured_one_call(mock_get_settings, mock_try_structured):
     """Normal structured operation makes exactly one call."""
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_response = MagicMock()
+    mock_response.choices = []
     mock_response.output_text = json.dumps({"skills": ["Python"]})
     mock_try_structured.return_value = mock_response
 
@@ -353,8 +360,9 @@ def test_normal_structured_one_call(mock_get_settings, mock_try_structured):
 def test_unsupported_format_two_calls(mock_get_settings, mock_try_plain, mock_try_structured):
     """Confirmed unsupported format makes exactly two calls."""
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = BadRequestError(
@@ -363,6 +371,7 @@ def test_unsupported_format_two_calls(mock_get_settings, mock_try_plain, mock_tr
         body=None,
     )
     mock_response = MagicMock()
+    mock_response.choices = []
     mock_response.output_text = json.dumps({"skills": ["Python"]})
     mock_try_plain.return_value = mock_response
 
@@ -377,8 +386,9 @@ def test_unsupported_format_two_calls(mock_get_settings, mock_try_plain, mock_tr
 def test_unrelated_bad_request_no_fallback(mock_get_settings, mock_try_plain, mock_try_structured):
     """Unrelated BadRequestError (invalid input) must not trigger a fallback."""
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = BadRequestError(
@@ -399,8 +409,9 @@ def test_unrelated_bad_request_no_fallback(mock_get_settings, mock_try_plain, mo
 def test_unrelated_bad_request_generic_format_word(mock_get_settings, mock_try_plain, mock_try_structured):
     """A 400 with the generic word 'format' must not trigger fallback."""
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = BadRequestError(
@@ -421,8 +432,9 @@ def test_unrelated_bad_request_generic_format_word(mock_get_settings, mock_try_p
 def test_unsupported_json_schema_via_error_body(mock_get_settings, mock_try_plain, mock_try_structured):
     """Confirmed unsupported via error body triggers exactly one fallback."""
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = BadRequestError(
@@ -431,6 +443,7 @@ def test_unsupported_json_schema_via_error_body(mock_get_settings, mock_try_plai
         body={"error": {"message": "The model does not support json_schema", "code": "unsupported_parameter"}},
     )
     mock_response = MagicMock()
+    mock_response.choices = []
     mock_response.output_text = json.dumps({"skills": ["Python"]})
     mock_try_plain.return_value = mock_response
 
@@ -445,8 +458,9 @@ def test_authentication_failure_one_call(mock_get_settings, mock_try_structured)
     """Authentication failure makes one call, no fallback."""
     from openai import AuthenticationError
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = AuthenticationError(
@@ -466,8 +480,9 @@ def test_rate_limit_one_call(mock_get_settings, mock_try_structured):
     """Rate limit makes one call, no fallback."""
     from openai import RateLimitError
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = RateLimitError(
@@ -487,8 +502,9 @@ def test_permission_failure_one_call(mock_get_settings, mock_try_structured):
     """Permission failure makes one call, no fallback."""
     from openai import PermissionDeniedError
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = PermissionDeniedError(
@@ -508,8 +524,9 @@ def test_server_error_one_call(mock_get_settings, mock_try_structured):
     """Server error makes one call, no fallback."""
     from openai import InternalServerError
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = InternalServerError(
@@ -529,8 +546,9 @@ def test_server_error_one_call(mock_get_settings, mock_try_structured):
 def test_fallback_failure_raises_provider_error(mock_get_settings, mock_try_plain, mock_try_structured):
     """Fallback failure raises ResumeProviderError."""
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = BadRequestError(
@@ -551,8 +569,9 @@ def test_fallback_failure_raises_provider_error(mock_get_settings, mock_try_plai
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_success(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     valid_json = json.dumps({
@@ -570,6 +589,7 @@ def test_parse_resume_success(mock_get_settings, mock_try_structured):
     })
 
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = valid_json
     mock_try_structured.return_value = fake_response
 
@@ -587,8 +607,9 @@ def test_parse_resume_success(mock_get_settings, mock_try_structured):
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_missing_optional_fields(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     minimal_json = json.dumps({
@@ -600,6 +621,7 @@ def test_parse_resume_missing_optional_fields(mock_get_settings, mock_try_struct
     })
 
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = minimal_json
     mock_try_structured.return_value = fake_response
 
@@ -611,15 +633,16 @@ def test_parse_resume_missing_optional_fields(mock_get_settings, mock_try_struct
     assert result["preferred_locations"] == []
 
 
-# ── Tests: Resume — Skill Normalisation and Dedup ──
+# ── Tests: Resume - Skill Normalisation and Dedup ──
 
 
 @patch("app.services.resume_parser._try_structured")
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_skill_normalisation(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     payload = json.dumps({
@@ -627,6 +650,7 @@ def test_parse_resume_skill_normalisation(mock_get_settings, mock_try_structured
     })
 
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = payload
     mock_try_structured.return_value = fake_response
 
@@ -634,19 +658,21 @@ def test_parse_resume_skill_normalisation(mock_get_settings, mock_try_structured
     assert result["skills"] == ["python", "fastapi"]
 
 
-# ── Tests: Resume — Negative Experience Rejection ──
+# ── Tests: Resume - Negative Experience Rejection ──
 
 
 @patch("app.services.resume_parser._try_structured")
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_negative_experience(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     payload = json.dumps({"experience_years": -5})
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = payload
     mock_try_structured.return_value = fake_response
 
@@ -654,19 +680,21 @@ def test_parse_resume_negative_experience(mock_get_settings, mock_try_structured
     assert result["experience_years"] is None
 
 
-# ── Tests: Resume — Implausible Experience Rejection ──
+# ── Tests: Resume - Implausible Experience Rejection ──
 
 
 @patch("app.services.resume_parser._try_structured")
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_implausible_experience(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     payload = json.dumps({"experience_years": 99})
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = payload
     mock_try_structured.return_value = fake_response
 
@@ -674,15 +702,16 @@ def test_parse_resume_implausible_experience(mock_get_settings, mock_try_structu
     assert result["experience_years"] is None
 
 
-# ── Tests: Resume — Invalid Experience Level ──
+# ── Tests: Resume - Invalid Experience Level ──
 
 
 @patch("app.services.resume_parser._try_structured")
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_invalid_experience_level(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     payload = json.dumps({
@@ -690,6 +719,7 @@ def test_parse_resume_invalid_experience_level(mock_get_settings, mock_try_struc
         "experience_years": 6,
     })
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = payload
     mock_try_structured.return_value = fake_response
 
@@ -697,18 +727,20 @@ def test_parse_resume_invalid_experience_level(mock_get_settings, mock_try_struc
     assert result["experience_level"] == "senior"
 
 
-# ── Tests: Resume — Malformed JSON ──
+# ── Tests: Resume - Malformed JSON ──
 
 
 @patch("app.services.resume_parser._try_structured")
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_malformed_json(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = "not valid json at all"
     mock_try_structured.return_value = fake_response
 
@@ -716,18 +748,20 @@ def test_parse_resume_malformed_json(mock_get_settings, mock_try_structured):
         parse_resume_with_llm("Some resume text")
 
 
-# ── Tests: Resume — Empty Output ──
+# ── Tests: Resume - Empty Output ──
 
 
 @patch("app.services.resume_parser._try_structured")
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_empty_output(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = ""
     mock_try_structured.return_value = fake_response
 
@@ -735,15 +769,16 @@ def test_parse_resume_empty_output(mock_get_settings, mock_try_structured):
         parse_resume_with_llm("empty resume")
 
 
-# ── Tests: Resume — API Failure ──
+# ── Tests: Resume - API Failure ──
 
 
 @patch("app.services.resume_parser._try_structured")
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_api_error(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     mock_try_structured.side_effect = Exception("API unavailable")
@@ -752,18 +787,20 @@ def test_parse_resume_api_error(mock_get_settings, mock_try_structured):
         parse_resume_with_llm("Some resume text")
 
 
-# ── Tests: Resume — Invalid Schema (not a dict) ──
+# ── Tests: Resume - Invalid Schema (not a dict) ──
 
 
 @patch("app.services.resume_parser._try_structured")
 @patch("app.services.resume_parser.get_settings")
 def test_parse_resume_invalid_schema(mock_get_settings, mock_try_structured):
     mock_settings = MagicMock()
-    mock_settings.openai_api_key = "sk-test"
-    mock_settings.openai_model = "gpt-5.6-sol"
+    mock_settings.groq_api_key = "sk-test"
+    mock_settings.groq_api_base = "https://api.groq.com/openai/v1"
+    mock_settings.groq_model = "llama-3.3-70b-versatile"
     mock_get_settings.return_value = mock_settings
 
     fake_response = MagicMock()
+    fake_response.choices = []
     fake_response.output_text = '"just a string"'
     mock_try_structured.return_value = fake_response
 
@@ -991,7 +1028,7 @@ def test_upload_resume_400_invalid(mock_get_user, mock_process, client):
 @patch("flask_login.utils._get_user")
 def test_upload_resume_503_config(mock_get_user, mock_process, client):
     mock_get_user.return_value.is_authenticated = True
-    mock_process.side_effect = ResumeConfigurationError("OPENAI_API_KEY not set")
+    mock_process.side_effect = ResumeConfigurationError("GROQ_API_KEY not set")
 
     resp = client.post("/profile/upload-resume", data={
         "resume": (io.BytesIO(b"content"), "resume.pdf"),

@@ -1,4 +1,4 @@
-"""Test the Notification Agent.
+﻿"""Test the Notification Agent.
 
 Ensures the demo user has notification preferences, then runs one
 notification cycle and reports what was sent.
@@ -50,7 +50,7 @@ def main():
     db = SessionLocal()
     try:
         print("\n" + "="*75)
-        print("  JobMatch AI — Notification Agent Demo")
+        print("  JobMatch - Notification Demo")
         print("="*75)
 
         profile = get_or_create_demo_profile(db)
@@ -72,7 +72,7 @@ def main():
         print(f"  Jobs considered:      {summary['jobs_considered']}")
         print(f"  Notifications sent:   {summary['notifications_sent']}")
         print(f"\n  Note: without SMTP configured in .env, emails are logged")
-        print(f"  to console instead of actually sent — this still proves")
+        print(f"  to console instead of actually sent - this still proves")
         print(f"  the decision logic (who gets notified, what jobs, why).")
 
     finally:

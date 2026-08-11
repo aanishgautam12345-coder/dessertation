@@ -1,4 +1,4 @@
-"""Shared test fixtures for JobMatch AI.
+"""Shared test fixtures for JobMatch.
 
 Run all tests:
     python -m pytest tests/ -v

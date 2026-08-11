@@ -1,13 +1,6 @@
-"""Scoring Configuration — versioned, configurable recommendation weights.
-
-Instead of hard-coding weights, this module provides:
-- A default weight configuration
-- The ability to load alternative weight sets from a JSON config file
-- Version tracking so results are reproducible
-
-Design decision: weights are stored in code by default (v1.0) but can be
-overridden by a JSON file for experimentation without code changes.
-"""
+﻿"""Recommendation scoring weights, versioned so results stay reproducible. Default
+weights live in code (v1.0); other versions can be loaded from a JSON config file
+for experimenting without touching code."""
 
 import json
 import logging
@@ -54,7 +47,7 @@ class ScoringWeights:
         )
 
 
-# Default weights — the version used in production
+# Default weights - the version used in production
 DEFAULT_WEIGHTS = ScoringWeights()
 
 

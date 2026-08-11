@@ -1,10 +1,5 @@
-"""Token Revocation — blacklist JWT tokens on logout or password reset.
-
-Adds a `token_blacklist` table and utility functions to:
-- Blacklist a token (on logout, password reset, account deactivation)
-- Check if a token is blacklisted (during auth validation)
-- Clean up expired blacklisted tokens periodically
-"""
+"""JWT revocation - blacklist a token on logout/password reset so it can't be reused
+even though it hasn't expired yet."""
 
 import uuid
 from datetime import datetime

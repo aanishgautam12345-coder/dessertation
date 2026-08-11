@@ -1,4 +1,4 @@
-"""CSV Ingestion Source — imports the job_descriptions2.csv dataset.
+﻿"""CSV Ingestion Source - imports the job_descriptions2.csv dataset.
 
 Expected CSV columns:
     Job Id, Experience, Qualifications, Salary Range, location, Country,
@@ -75,7 +75,7 @@ class CsvDescriptions2Source(JobSource):
             ) or None
 
             payload = {
-                # Core fields — pipeline reads these keys
+                # Core fields - pipeline reads these keys
                 "job_title": title,
                 "job_description": description,
                 "company": _clean(row.get("Company")),
@@ -111,7 +111,7 @@ class CsvDescriptions2Source(JobSource):
                 )
             )
 
-        print(f"✓ Parsed {len(records)} jobs from CSV ({skipped} skipped — no title/description).")
+        print(f"✓ Parsed {len(records)} jobs from CSV ({skipped} skipped - no title/description).")
         return records
 
 
@@ -134,7 +134,7 @@ def _parse_salary_range(salary_str: str | None) -> tuple[float | None, float | N
     # Match patterns like $59K-$99K, $59k - $99k, $120,000-$150,000
     match = re.search(
         r"\$?\s*([\d,]+(?:\.\d+)?)\s*([kKmM])?"
-        r"\s*[-–—to]+\s*"
+        r"\s*[-to]+\s*"
         r"\$?\s*([\d,]+(?:\.\d+)?)\s*([kKmM])?",
         salary_str,
     )

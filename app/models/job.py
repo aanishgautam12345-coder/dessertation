@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from datetime import datetime
 from sqlalchemy import String, Integer, Float, Boolean, DateTime, Text, ForeignKey, Index, Computed
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -33,11 +33,7 @@ class RawJob(Base):
 
 
 class Job(Base):
-    """Canonical job vacancy — the deduplicated, normalised representation.
-
-    One canonical job may have multiple source postings (JobPosting records)
-    from different platforms. This entity represents the "truth" after
-    processing, deduplication, and normalisation.
+    """Canonical job vacancy - the deduplicated, normalised representation.
     """
 
     __tablename__ = "jobs"
@@ -110,7 +106,7 @@ class Job(Base):
     )
 
     # ── Embedding metadata ──
-    embedding = mapped_column(Vector(get_settings().embedding_dim), nullable=True)
+    embedding = mapped_column(Vector(768), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(100))  # e.g. "BAAI/bge-base-en-v1.5"
     embedding_dim: Mapped[int | None] = mapped_column(Integer)  # e.g. 768
     embedded_at: Mapped[datetime | None] = mapped_column(DateTime)

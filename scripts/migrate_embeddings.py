@@ -1,9 +1,5 @@
-"""Migrate embeddings from 384-dim (MiniLM) to 768-dim (BGE).
+"""768-dim (BGE).
 
-This script:
-    1. Alters the vector columns in jobs and user_profiles from 384 to 768
-    2. Clears all existing embeddings (they're incompatible with the new model)
-    3. Triggers a full reprocess to generate new embeddings
 
 Usage:
     python -m scripts.migrate_embeddings

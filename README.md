@@ -8,7 +8,7 @@ discover relevant employment opportunities.
 
 ---
 
-## Tech Stack (100% free)
+## Tech Stack 
 
 | Layer | Technology |
 |---|---|
@@ -16,7 +16,7 @@ discover relevant employment opportunities.
 | Frontend | Python + Flask (Jinja2 templates) |
 | Database | PostgreSQL 16 + pgvector |
 | Embeddings | BAAI/bge-base-en-v1.5 (768d) |
-| LLM | OpenAI (GPT) |
+| LLM | Grok  |
 | Data Sources | Adzuna API + Reed API + We Work Remotely RSS |
 
 ---
@@ -50,13 +50,13 @@ This starts PostgreSQL 16 with the pgvector extension on port 5432.
 ### 4. Configure environment
 ```bash
 cp .env.example .env
-# Edit .env with your actual keys (Adzuna, OpenAI, etc.)
+# Edit .env with your actual keys (Adzuna, Groq, etc.)
 ```
 
-The LLM feature (RAG explanations + resume parsing) requires an OpenAI API key.
-- Set `OPENAI_API_KEY` in `.env` — get one at https://platform.openai.com/api-keys
-- Optionally set `OPENAI_MODEL` (default: `gpt-5.6-sol`)
-- ChatGPT subscriptions and OpenAI API billing are separate; the API key is not the same as a ChatGPT login.
+The LLM feature (RAG explanations + resume parsing) requires a Groq API key.
+- Set `GROQ_API_KEY` in `.env` — get one at https://console.groq.com/keys
+- Set `GROQ_API_BASE` in `.env` (default: `https://api.groq.com/openai/v1`)
+- Optionally set `GROQ_MODEL` (default: `llama-3.3-70b-versatile`)
 
 ### 5. Run database migrations
 ```bash
@@ -99,7 +99,6 @@ Copy `.env.example` to `.env` and set values for the services you use. Never
 commit `.env`. Important settings include:
 
 - `DATABASE_URL`, `SECRET_KEY`, `APP_BASE_URL`
-- `OPENAI_API_KEY` and `OPENAI_MODEL`
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`
 - `PASSWORD_RESET_EXPIRY_MINUTES` (15 by default)
 - `SCHEDULER_ENABLED`, scheduler timezone and delivery times

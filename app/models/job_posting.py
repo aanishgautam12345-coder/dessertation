@@ -1,4 +1,4 @@
-"""Job Posting — a specific source posting that contributes to a canonical job.
+﻿"""Job Posting - a specific source posting that contributes to a canonical job.
 
 One canonical job may have multiple source postings from different platforms
 (e.g., the same role posted on Adzuna and Reed). Each posting preserves the

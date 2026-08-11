@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% block title %}Import monitoring — JobMatch AI{% endblock %}{% block content %}
+﻿{% extends "base.html" %}{% block title %}Import monitoring - JobMatch{% endblock %}{% block content %}
 <div class="max-w-[1128px] mx-auto px-4 py-6"><h1 class="text-2xl font-bold mb-4">Import monitoring</h1>
 <div class="flex gap-2 mb-4"><a class="li-btn-outline" href="{{ url_for('admin.jobs') }}">Manage jobs</a><a class="li-btn-outline" href="{{ url_for('admin.reprocess') }}">Reprocess</a><a class="li-btn-outline" href="{{ url_for('admin.aliases') }}">Aliases</a></div>
 <form class="li-card p-4 grid sm:grid-cols-3 gap-3 mb-4"><input class="li-input" name="source" value="{{ source }}" placeholder="Source"><select class="li-input" name="status"><option value="">All statuses</option>{% for value in ['running','completed','completed_with_errors','failed'] %}<option {% if status == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select><button class="li-btn-primary">Filter</button></form>

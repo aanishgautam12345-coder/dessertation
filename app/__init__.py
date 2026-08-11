@@ -1,3 +1,3 @@
-"""JobMatch AI - Core Application."""
+"""JobMatch - Core Application."""
 
 __all__ = []

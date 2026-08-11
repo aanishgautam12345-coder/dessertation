@@ -1,7 +1,4 @@
-﻿"""Extended Jobs API â€” Saved Jobs, Skill Search, Company Search, Recently Added.
-
-Adds the missing features from the requirements audit.
-"""
+﻿"""Extended jobs endpoints: saved jobs, skill search, company search, recently added."""
 
 import uuid
 from datetime import datetime
@@ -19,7 +16,7 @@ from app.core.deps import get_current_user
 router = APIRouter()
 
 
-# â”€â”€ Saved Jobs â”€â”€
+# ── Saved Jobs ──
 
 @router.post("/saved/{job_id}", status_code=201)
 def save_job(
@@ -96,7 +93,7 @@ def get_saved_jobs(
     }
 
 
-# â”€â”€ Skill Search â”€â”€
+# ── Skill Search ──
 
 @router.get("/search/skills")
 def search_by_skills(
@@ -105,7 +102,7 @@ def search_by_skills(
     limit: int = Query(20, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    """Search jobs by required skills â€” matches against the job_skills table."""
+    """Search jobs by required skills - matches against the job_skills table."""
     skill_list = [s.strip().lower() for s in skills.split(",") if s.strip()]
     if not skill_list:
         raise HTTPException(status_code=400, detail="Provide at least one skill")
@@ -163,7 +160,7 @@ def search_by_skills(
     }
 
 
-# â”€â”€ Company Search â”€â”€
+# ── Company Search ──
 
 @router.get("/search/company")
 def search_by_company(
@@ -172,10 +169,11 @@ def search_by_company(
     db: Session = Depends(get_db),
 ):
     """Search jobs by company name (partial match)."""
-    pattern = f"%{q}%"
+    q_escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{q_escaped}%"
     jobs = (
         db.query(Job)
-        .filter(Job.company.ilike(pattern), Job.is_active.is_(True))
+        .filter(Job.company.ilike(pattern, escape="\\"), Job.is_active.is_(True))
         .order_by(Job.created_at.desc())
         .limit(limit)
         .all()
@@ -202,7 +200,7 @@ def search_by_company(
     }
 
 
-# â”€â”€ Recently Added Jobs â”€â”€
+# ── Recently Added Jobs ──
 
 @router.get("/recent")
 def get_recent_jobs(
@@ -241,7 +239,7 @@ def get_recent_jobs(
     }
 
 
-# â”€â”€ Similar Skill Matching â”€â”€
+# ── Similar Skill Matching ──
 
 @router.get("/search/similar-skills")
 def search_similar_skills(
@@ -249,13 +247,8 @@ def search_similar_skills(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    """Semantic skill matching â€” embeds the skill set and finds jobs with
-    similar skill requirements using vector similarity.
-
-    Unlike /search/skills (exact dictionary match), this uses the embedding
-    model to find jobs that require CONCEPTUALLY similar skills, even if
-    the exact words don't match (e.g. 'react' finds 'frontend framework' jobs).
-    """
+    """Embedding-based skill matching, unlike /search/skills which needs an exact
+    dictionary match. Can find conceptually related jobs even when the words differ."""
     from app.services.embedding import generate_embedding
 
     skill_list = [s.strip() for s in skills.split(",") if s.strip()]
@@ -265,26 +258,41 @@ def search_similar_skills(
     query_text = "Skills: " + ", ".join(skill_list)
     query_embedding = generate_embedding(query_text, is_query=True)
 
-    distance = Job.embedding.cosine_distance(query_embedding)
-
     stmt = (
         select(
             Job.id, Job.title, Job.title_clean, Job.company,
             Job.location_city, Job.location_country, Job.remote,
             Job.salary_min, Job.salary_max, Job.salary_currency,
             Job.category, Job.url,
-            (1 - distance).label("similarity"),
+            Job.embedding,
         )
         .where(Job.embedding.isnot(None), Job.is_active.is_(True))
-        .order_by(distance)
-        .limit(limit)
     )
 
-    results = db.execute(stmt).all()
+    rows = db.execute(stmt).all()
+
+    import numpy as np
+    q_vec = np.array(query_embedding, dtype=np.float32)
+    q_norm = np.linalg.norm(q_vec)
+
+    scored = []
+    for row in rows:
+        emb = row.embedding
+        if emb is None:
+            continue
+        emb_vec = np.array(emb, dtype=np.float32)
+        emb_norm = np.linalg.norm(emb_vec)
+        if emb_norm == 0:
+            continue
+        sim = float(np.dot(q_vec, emb_vec) / (q_norm * emb_norm)) if q_norm > 0 else 0.0
+        scored.append((row, sim))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    scored = scored[:limit]
 
     return {
         "query_skills": skill_list,
-        "count": len(results),
+        "count": len(scored),
         "results": [
             {
                 "id": str(row.id),
@@ -298,9 +306,9 @@ def search_similar_skills(
                 "salary_currency": row.salary_currency,
                 "category": row.category,
                 "url": row.url,
-                "similarity": round(float(row.similarity), 4),
-                "match_percentage": round(float(row.similarity) * 100, 1),
+                "similarity": round(sim, 4),
+                "match_percentage": round(sim * 100, 1),
             }
-            for row in results
+            for row, sim in scored
         ],
     }

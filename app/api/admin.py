@@ -1,7 +1,7 @@
 """Administrator-only monitoring and management API."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -54,6 +54,26 @@ class JobUpdateRequest(BaseModel):
     salary_currency: str | None = None
     salary_period: str | None = None
     url: str | None = None
+
+
+class JobCreateRequest(BaseModel):
+    title: str
+    company: str | None = None
+    description: str | None = None
+    requirements: str | None = None
+    responsibilities: str | None = None
+    location_city: str | None = None
+    location_country: str | None = None
+    remote: bool = False
+    category: str | None = None
+    job_type: str | None = None
+    experience_level: str | None = None
+    salary_min: float | None = None
+    salary_max: float | None = None
+    salary_currency: str | None = None
+    salary_period: str | None = None
+    url: str | None = None
+    skills: list[str] = Field(default_factory=list)
 
 
 class AliasRequest(BaseModel):
@@ -133,23 +153,103 @@ def reprocess(
 @router.get("/jobs")
 def jobs(
     q: str | None = None, source: str | None = None, category: str | None = None,
-    active: bool | None = None, page: int = Query(1, ge=1),
+    active: bool | None = None, min_quality: float | None = None,
+    page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100), db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
     query = db.query(Job)
     if q:
-        query = query.filter(or_(Job.title.ilike(f"%{q}%"), Job.company.ilike(f"%{q}%")))
+        # Escape LIKE special characters
+        q_escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.filter(or_(Job.title.ilike(f"%{q_escaped}%", escape="\\"), Job.company.ilike(f"%{q_escaped}%", escape="\\")))
     if source:
         query = query.filter(Job.source == source)
     if category:
         query = query.filter(Job.category == category)
     if active is not None:
         query = query.filter(Job.is_active.is_(active))
+    if min_quality is not None:
+        query = query.filter(Job.quality_score >= min_quality)
     total = query.count()
     offset, limit = _page(page, page_size)
     rows = query.order_by(Job.created_at.desc()).offset(offset).limit(limit).all()
     return {"items": [_job_dict(job) for job in rows], "page": page, "page_size": page_size, "total": total}
+
+
+@router.post("/jobs", status_code=201)
+def create_job(
+    request: JobCreateRequest, db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Create a new job listing directly (bypasses ingestion pipeline)."""
+    from app.processing.title import clean_title
+    from app.processing.quality import score_job
+    from app.processing.dedup import generate_dedup_hash
+    from app.services.embedding import generate_embedding, build_job_text
+    from app.models.job import JobSkill
+    import uuid
+
+    title_clean = clean_title(request.title)
+    dedup_hash = generate_dedup_hash(
+        title_clean, request.company,
+        f"{request.location_city or ''} {request.location_country or ''}".strip(),
+        request.salary_min, request.salary_max,
+    )
+
+    # Check for exact hash duplicate
+    existing = db.query(Job).filter(Job.dedup_hash == dedup_hash).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="A job with identical title, company, location, and salary already exists")
+
+    # Generate embedding
+    text_for_embedding = build_job_text(title_clean, request.description or "", request.skills or None)
+    embedding = generate_embedding(text_for_embedding)
+
+    # Score quality
+    quality = score_job(
+        title=title_clean, company=request.company, description=request.description,
+        location_city=request.location_city, location_country=request.location_country,
+        salary_min=request.salary_min, salary_max=request.salary_max,
+        category=request.category, job_type=request.job_type,
+        experience_level=request.experience_level, skills=request.skills or None,
+        url=request.url, source="admin",
+    )
+
+    new_job = Job(
+        id=uuid.uuid4(),
+        title=request.title,
+        title_clean=title_clean,
+        company=request.company,
+        description=request.description,
+        requirements=request.requirements,
+        responsibilities=request.responsibilities,
+        location_city=request.location_city,
+        location_country=request.location_country,
+        remote=request.remote,
+        category=request.category,
+        job_type=request.job_type,
+        experience_level=request.experience_level,
+        salary_min=request.salary_min,
+        salary_max=request.salary_max,
+        salary_currency=request.salary_currency,
+        salary_period=request.salary_period,
+        url=request.url,
+        source="admin",
+        dedup_hash=dedup_hash,
+        embedding=embedding,
+        quality_score=quality.overall,
+        processing_version="2.0",
+        is_active=True,
+    )
+    db.add(new_job)
+    db.flush()
+
+    for skill_name in (request.skills or []):
+        db.add(JobSkill(id=uuid.uuid4(), job_id=new_job.id, skill=skill_name))
+
+    db.commit()
+    return _job_dict(new_job, complete=True)
 
 
 @router.get("/jobs/{job_id}")
@@ -242,7 +342,7 @@ def _set_active(db: Session, job_id: uuid.UUID, active: bool):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     job.is_active = active
-    job.updated_at = datetime.utcnow()
+    job.updated_at = datetime.now(timezone.utc)
     db.commit()
     return {"id": str(job.id), "is_active": job.is_active}
 
@@ -254,6 +354,7 @@ def _job_dict(job: Job, complete: bool = False) -> dict:
         "job_type": job.job_type, "is_active": job.is_active,
         "salary_min": job.salary_min, "salary_max": job.salary_max,
         "salary_currency": job.salary_currency, "salary_period": job.salary_period,
+        "quality_score": job.quality_score,
         "updated_at": job.updated_at,
     }
     if complete:

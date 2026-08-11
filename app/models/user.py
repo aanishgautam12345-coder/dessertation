@@ -1,8 +1,8 @@
-import uuid
+﻿import uuid
 from datetime import datetime
 from sqlalchemy import String, Integer, Float, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from pgvector.sqlalchemy import Vector
 from app.database import Base
 from app.config import get_settings
@@ -63,8 +63,8 @@ class UserProfile(Base):
     salary_currency: Mapped[str | None] = mapped_column(String(10), default="USD")
     career_interests: Mapped[str | None] = mapped_column(Text)
 
-    # The user's profile as a vector — recomputed on every profile save
-    profile_embedding = mapped_column(Vector(get_settings().embedding_dim), nullable=True)
+    # The user's profile as a vector - recomputed on every profile save
+    profile_embedding = mapped_column(Vector(768), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="profile")
 

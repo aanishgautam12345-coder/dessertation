@@ -1,10 +1,5 @@
-"""Recommendation Run — audit trail for recommendation generation.
-
-Every call to the recommendation agent creates a RecommendationRun record
-that captures the exact configuration, retrieval method, candidate pool size,
-scoring parameters, and latency. This makes every recommendation set
-reproducible and auditable.
-"""
+"""One row per recommendation run: config, retrieval method, pool sizes,
+scoring params, latency - enough to replay or debug a given result set later."""
 
 import uuid
 from datetime import datetime

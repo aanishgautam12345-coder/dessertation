@@ -1,21 +1,13 @@
-"""Recommendation Agent — the autonomous core of JobMatch AI.
-
-Unlike a static function, this agent DECIDES:
-    - how many candidates to retrieve from the vector search
-    - whether the candidate pool is strong enough to return
-    - how to rank and trim the final recommendation list
-    - whether to apply cross-encoder reranking for higher quality
-
-Every decision is logged to the RecommendationRun audit trail for
-reproducibility and dissertation analysis.
-"""
+﻿"""The recommendation pipeline: retrieves candidates, decides whether to expand the pool
+if scores are weak, scores everything, reranks if the pool's big enough, and trims to
+top_n. Every step gets logged to RecommendationRun so a run can be replayed later."""
 
 import json
 import logging
 import time
 import uuid
-from datetime import datetime
-from sqlalchemy import select
+from datetime import datetime, timezone
+from sqlalchemy import Float, select
 from sqlalchemy.orm import Session
 
 from app.models.job import Job, JobSkill
@@ -36,9 +28,14 @@ QUALITY_THRESHOLD = 0.35
 MIN_ACCEPTABLE_SCORE = 0.15
 RERANK_THRESHOLD = 20
 
+# Jobs below this quality score don't get recommended. Set from the real score
+# distribution (min 38.75, avg 48.6, P25 44.75) - 40 catches the actually-bad
+# postings without throwing out good ones.
+MIN_JOB_QUALITY_SCORE = 40.0
+
 
 class RecommendationAgent:
-    """Autonomous agent that produces ranked, scored job recommendations
+    """Pipeline that produces ranked, scored job recommendations
     for a user profile."""
 
     def __init__(self, db: Session):
@@ -47,7 +44,6 @@ class RecommendationAgent:
     def recommend(self, profile: UserProfile, top_n: int = 10, hard_constraints: dict | None = None) -> list[dict]:
         """Generate ranked recommendations for a user profile.
 
-        Every step is timed and logged to the RecommendationRun audit trail.
         """
         start_time = time.time()
         weights = load_weights()
@@ -73,27 +69,27 @@ class RecommendationAgent:
 
         decisions: list[dict] = []
 
-        # Step 1 — ensure profile embedding exists
+        # Step 1 - ensure profile embedding exists
         if profile.profile_embedding is None:
             profile.profile_embedding = self._compute_profile_embedding(profile)
             self.db.commit()
             decisions.append({"step": "compute_embedding", "action": "computed_profile_embedding"})
 
-        # Step 2 — initial retrieval
+        # Step 2 - initial retrieval
         candidates, similarities = self._retrieve_candidates(profile, limit=INITIAL_CANDIDATE_POOL)
         run.candidate_pool_size = len(candidates)
         decisions.append({"step": "retrieve", "pool_size": len(candidates), "method": "hnsw_cosine"})
 
         if not candidates:
             run.status = "completed"
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(timezone.utc)
             run.agent_decisions = {"decisions": decisions}
             run.latency_ms = (time.time() - start_time) * 1000
             self.db.add(run)
             self.db.commit()
             return []
 
-        # Step 3 — score initial pool with hard constraints
+        # Step 3 - score initial pool with hard constraints
         scored = self._score_candidates(profile, candidates, similarities, hard_constraints)
         decisions.append({
             "step": "score",
@@ -101,7 +97,7 @@ class RecommendationAgent:
             "hard_constraints_applied": hard_constraints is not None,
         })
 
-        # Step 4 — AGENT DECISION: expand pool?
+        # Step 4 - expand the pool if the results we got aren't great
         passing = [s for s in scored if s["breakdown"].passes_hard_filters]
         avg_score = (sum(s["breakdown"].overall_score for s in passing) / len(passing)) if passing else 0.0
 
@@ -126,7 +122,7 @@ class RecommendationAgent:
                 "action": "kept_initial_pool",
             })
 
-        # Step 5 — filter, rerank, rank
+        # Step 5 - filter, rerank, rank
         scored = [s for s in scored if s["breakdown"].passes_hard_filters]
         hard_filtered_count = len(scored)
         scored = [s for s in scored if s["breakdown"].overall_score >= MIN_ACCEPTABLE_SCORE]
@@ -135,6 +131,17 @@ class RecommendationAgent:
             "after_hard_filter": hard_filtered_count,
             "after_min_score": len(scored),
         })
+
+        # Step 5b - collapse near-duplicate candidates (same company + near-identical
+        # title) so the user isn't shown the same job twice under different postings.
+        before_collapse = len(scored)
+        scored = self._collapse_duplicate_candidates(scored)
+        if len(scored) < before_collapse:
+            decisions.append({
+                "step": "collapse_duplicates",
+                "before": before_collapse,
+                "after": len(scored),
+            })
 
         # Reranking decision
         if is_reranker_available() and len(scored) > RERANK_THRESHOLD:
@@ -162,6 +169,7 @@ class RecommendationAgent:
 
         elapsed_ms = (time.time() - start_time) * 1000
         run.latency_ms = round(elapsed_ms, 1)
+        run.status = "completed"
         run.completed_at = datetime.utcnow()
         self.db.commit()
 
@@ -197,7 +205,7 @@ class RecommendationAgent:
         ]
 
     def _compute_profile_embedding(self, profile: UserProfile) -> list[float]:
-        """Turn the user profile into a vector — the same embedding space as jobs."""
+        """Turn the user profile into a vector representation - the same space as jobs."""
         text = build_profile_text(
             headline=profile.headline,
             skills=profile.skills,
@@ -207,21 +215,119 @@ class RecommendationAgent:
         return generate_embedding(text, is_query=True)
 
     def _retrieve_candidates(self, profile: UserProfile, limit: int) -> tuple[list[Job], list[float]]:
-        """Vector search: find the `limit` jobs closest to the profile embedding."""
-        distance = Job.embedding.cosine_distance(profile.profile_embedding)
+        """Vector search: find the `limit` jobs closest to the profile vector."""
+        if profile.profile_embedding is None:
+            return [], []
+
+        # Use pgvector cosine distance for similarity scoring
+        try:
+            distance_expr = Job.embedding.op("<=>", return_type=Float)(profile.profile_embedding)
+            stmt = (
+                select(Job, distance_expr.label("distance"))
+                .where(
+                    Job.embedding.isnot(None),
+                    Job.is_active.is_(True),
+                    Job.quality_score.isnot(None),
+                    Job.quality_score >= MIN_JOB_QUALITY_SCORE,
+                )
+                .order_by(distance_expr.asc())
+                .limit(limit)
+            )
+            results = self.db.execute(stmt).all()
+            jobs = [row[0] for row in results]
+            similarities = [1.0 - row.distance for row in results]
+            return jobs, similarities
+        except Exception:
+            pass
+
+        # Fallback: Python cosine similarity
+        import numpy as np
 
         stmt = (
-            select(Job, (1 - distance).label("similarity"))
-            .where(Job.embedding.isnot(None), Job.is_active.is_(True))
-            .order_by(distance)
-            .limit(limit)
+            select(Job)
+            .where(
+                Job.embedding.isnot(None),
+                Job.is_active.is_(True),
+                Job.quality_score.isnot(None),
+                Job.quality_score >= MIN_JOB_QUALITY_SCORE,
+            )
         )
 
-        results = self.db.execute(stmt).all()
-        jobs = [row[0] for row in results]
-        similarities = [float(row[1]) for row in results]
+        all_jobs = self.db.execute(stmt).scalars().all()
+
+        q_vec = np.array(profile.profile_embedding, dtype=np.float32)
+        q_norm = np.linalg.norm(q_vec)
+        if q_norm == 0:
+            return [], []
+
+        scored = []
+        for job in all_jobs:
+            emb = job.embedding
+            if emb is None:
+                continue
+            emb_vec = np.array(emb, dtype=np.float32)
+            emb_norm = np.linalg.norm(emb_vec)
+            if emb_norm == 0:
+                continue
+            sim = float(np.dot(q_vec, emb_vec) / (q_norm * emb_norm))
+            scored.append((job, sim))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        scored = scored[:limit]
+
+        jobs = [item[0] for item in scored]
+        similarities = [item[1] for item in scored]
 
         return jobs, similarities
+
+    def _collapse_duplicate_candidates(self, scored: list[dict]) -> list[dict]:
+        """Drop duplicate postings of the same job (same company + near-identical title,
+        same thresholds as services/search.py) so we don't recommend it twice."""
+        from rapidfuzz import fuzz
+        from app.services.search import _normalise_company, _normalise_title
+
+        groups: list[list[int]] = []
+        assigned: set[int] = set()
+
+        for i, item_i in enumerate(scored):
+            if i in assigned:
+                continue
+            group = [i]
+            norm_comp_i = _normalise_company(item_i["job"].company)
+            norm_title_i = _normalise_title(item_i["job"].title_clean or item_i["job"].title)
+
+            for j in range(i + 1, len(scored)):
+                if j in assigned:
+                    continue
+                item_j = scored[j]
+                norm_comp_j = _normalise_company(item_j["job"].company)
+                norm_title_j = _normalise_title(item_j["job"].title_clean or item_j["job"].title)
+
+                comp_sim = fuzz.token_set_ratio(norm_comp_i, norm_comp_j) / 100.0
+                if comp_sim < 0.80:
+                    continue
+                title_sim = fuzz.token_set_ratio(norm_title_i, norm_title_j) / 100.0
+                if title_sim < 0.60:
+                    continue
+
+                group.append(j)
+                assigned.add(j)
+
+            assigned.add(i)
+            groups.append(group)
+
+        collapsed = []
+        for group in groups:
+            best_idx = max(
+                group,
+                key=lambda idx: (
+                    scored[idx]["breakdown"].overall_score,
+                    scored[idx]["job"].quality_score or 0.0,
+                ),
+            )
+            collapsed.append(scored[best_idx])
+
+        return collapsed
 
     def _score_candidates(
         self, profile: UserProfile, candidates: list[Job], similarities: list[float],

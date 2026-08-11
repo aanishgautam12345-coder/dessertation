@@ -1,4 +1,4 @@
-﻿"""Seed the database from the Reed.co.uk API.
+"""Seed the database from the Reed.co.uk API.
 
 Usage:
     python -m scripts.seed_reed --keywords "python developer" --location "london"

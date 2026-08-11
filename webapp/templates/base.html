@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{% block title %}JobMatch AI{% endblock %}</title>
+    <title>{% block title %}JobMatch{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -100,7 +100,9 @@
                     </div>
                     <span class="hidden lg:block text-xs font-medium text-[#00000099]">Me ▾</span>
                 </a>
-                <a href="{{ url_for('auth.logout') }}" class="text-xs font-medium text-[#66615b] hover:text-[#000000e6] transition px-2 py-1 hidden sm:block">Sign out</a>
+                <form method="POST" action="{{ url_for('auth.logout') }}" class="inline">
+                    <button type="submit" class="text-xs font-medium text-[#66615b] hover:text-[#000000e6] transition px-2 py-1 hidden sm:block">Sign out</button>
+                </form>
                 {% else %}
                 <a href="{{ url_for('auth.login') }}" class="li-btn-outline text-xs py-1.5 px-4">Sign in</a>
                 <a href="{{ url_for('auth.register') }}" class="li-btn-primary text-xs py-1.5 px-4">Join now</a>
@@ -128,7 +130,7 @@
 
     <footer class="bg-white border-t border-[#e0dfdc] mt-auto">
         <div class="max-w-[1128px] mx-auto px-4 py-4">
-            <p class="text-center text-xs text-[#999589]">JobMatch AI — Dissertation Project · Powered by Semantic Search &amp; Agentic AI</p>
+            <p class="text-center text-xs text-[#999589]">JobMatch - Dissertation Project · Powered by Semantic Search &amp; Agentic Matching</p>
         </div>
     </footer>
     {% block extra_scripts %}{% endblock %}

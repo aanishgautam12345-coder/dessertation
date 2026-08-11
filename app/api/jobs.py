@@ -1,4 +1,4 @@
-"""Jobs API — search and filtering endpoints."""
+﻿"""Jobs API - search and filtering endpoints."""
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
@@ -18,7 +18,7 @@ def search_semantic(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    """AI-powered semantic search — ranks jobs by meaning, not keywords."""
+    """Semantic search - ranks jobs by meaning, not keywords."""
     results = semantic_search(db, query=q, limit=limit)
     return {"query": q, "count": len(results), "results": results}
 
@@ -29,7 +29,7 @@ def search_keyword(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    """Traditional keyword search — the baseline for comparison."""
+    """Traditional keyword search - the baseline for comparison."""
     results = keyword_search(db, query=q, limit=limit)
     return {"query": q, "count": len(results), "results": results}
 
@@ -41,12 +41,8 @@ def search_evidence(
     enable_fallback: bool = Query(True, description="Enable semantic fallback for few results"),
     db: Session = Depends(get_db),
 ):
-    """Evidence-backed search — requires verifiable lexical evidence before returning results.
-
-    For short technical queries (Azure, Python, Docker), returns only jobs with
-    direct evidence in title, skills, requirements, or description. Falls back
-    to semantic similarity only when insufficient evidence-backed results exist.
-    """
+    """Requires real lexical evidence for short queries like "Azure" or "Docker";
+    only falls back to semantic similarity if there aren't enough matches."""
     results = evidence_search(db, query=q, limit=limit, enable_semantic_fallback=enable_fallback)
     return {"query": q, "count": len(results), "results": results}
 
@@ -89,6 +85,6 @@ def get_similar_jobs(
     limit: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
 ):
-    """Find jobs similar to a given job — 'More like this'."""
+    """Find jobs similar to a given job - 'More like this'."""
     results = find_similar_jobs(db, job_id=job_id, limit=limit)
     return {"job_id": job_id, "count": len(results), "results": results}

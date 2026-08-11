@@ -1,9 +1,9 @@
-"""Recommendations API — get personalised job recommendations.
+﻿"""Recommendations API - get personalised job recommendations.
 
 Endpoints:
-    GET  /me/recommendations          — get ranked recommendations for current user
-    GET  /me/recommendations/{job_id} — get single recommendation detail
-    POST /explain/{job_id}            — generate RAG explanation for a job match
+    GET  /me/recommendations          - get ranked recommendations for current user
+    GET  /me/recommendations/{job_id} - get single recommendation detail
+    POST /explain/{job_id}            - generate explanation for a job match
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,7 +16,7 @@ from app.models.job import Job, JobSkill
 from app.models.recommendation import Recommendation
 from app.core.deps import get_current_user
 from app.agents.recommendation_agent import RecommendationAgent
-from app.services.rag import generate_explanation
+from app.services.rag import generate_explanation, ExplanationResult
 from app.services.recommendation import compute_match_score, MatchBreakdown
 from app.services.profile_completeness import calculate_completeness
 
@@ -59,6 +59,13 @@ class ExplainRequest(BaseModel):
 class ExplainResponse(BaseModel):
     explanation: str
     match_percentage: float
+    headline: str | None = None
+    strengths: list[str] | None = None
+    gaps: list[str] | None = None
+    recommendation: str | None = None
+    confidence: float | None = None
+    match_tier: str | None = None
+    error: str | None = None
 
 
 @router.get("/me/recommendations", response_model=RecommendationsListResponse)
@@ -100,7 +107,7 @@ def get_recommendations(
         if hard_filter_min_salary:
             hard_constraints["min_salary"] = hard_filter_min_salary
 
-    # Run recommendation agent
+    # Run recommendation pipeline
     agent = RecommendationAgent(db)
     recommendations = agent.recommend(profile, top_n=top_n, hard_constraints=hard_constraints)
 
@@ -149,11 +156,14 @@ def get_recommendation_detail(
 
     job_skills = [s.skill for s in db.query(JobSkill).filter(JobSkill.job_id == job.id).all()]
 
-    # Get similarity from DB
-    from sqlalchemy import select
-    stmt = select((1 - Job.embedding.cosine_distance(profile.profile_embedding)).label("similarity")).where(Job.id == job.id)
-    result = db.execute(stmt).first()
-    similarity_value = float(result[0]) if result else 0.5
+    # Compute similarity in Python
+    import numpy as np
+    if profile.profile_embedding is not None and job.embedding is not None:
+        a, b = np.array(profile.profile_embedding), np.array(job.embedding)
+        denom = np.linalg.norm(a) * np.linalg.norm(b)
+        similarity_value = float(np.dot(a, b) / denom) if denom else 0.0
+    else:
+        similarity_value = 0.5
 
     breakdown = compute_match_score(
         profile, job, job_skills, similarity_value,
@@ -200,7 +210,7 @@ def explain_recommendation(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Generate a RAG explanation for why a job matches the user's profile."""
+    """Generate an explanation for why a job matches the user's profile."""
     profile = db.query(UserProfile).filter(UserProfile.user_id == user.id).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -211,27 +221,37 @@ def explain_recommendation(
 
     job_skills = [s.skill for s in db.query(JobSkill).filter(JobSkill.job_id == job.id).all()]
 
-    from sqlalchemy import select
-    stmt = select((1 - Job.embedding.cosine_distance(profile.profile_embedding)).label("similarity")).where(Job.id == job.id)
-    result = db.execute(stmt).first()
-    similarity_value = float(result[0]) if result else 0.5
+    import numpy as np
+    if profile.profile_embedding is not None and job.embedding is not None:
+        a, b = np.array(profile.profile_embedding), np.array(job.embedding)
+        denom = np.linalg.norm(a) * np.linalg.norm(b)
+        similarity_value = float(np.dot(a, b) / denom) if denom else 0.0
+    else:
+        similarity_value = 0.5
 
     breakdown = compute_match_score(
         profile, job, job_skills, similarity_value,
         profile.preferred_job_types
     )
 
-    explanation = generate_explanation(profile, job, breakdown)
+    result = generate_explanation(profile, job, breakdown)
 
     rec = db.query(Recommendation).filter(
         Recommendation.user_id == user.id,
         Recommendation.job_id == job.id,
     ).first()
     if rec:
-        rec.explanation = explanation
+        rec.explanation = result.to_text()
         db.commit()
 
     return ExplainResponse(
-        explanation=explanation,
+        explanation=result.to_text(),
         match_percentage=breakdown.match_percentage,
+        headline=result.headline or None,
+        strengths=result.strengths or None,
+        gaps=result.gaps or None,
+        recommendation=result.recommendation or None,
+        confidence=result.confidence if result.confidence else None,
+        match_tier=result.match_tier,
+        error=result.error,
     )

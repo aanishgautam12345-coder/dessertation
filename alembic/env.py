@@ -1,7 +1,7 @@
-"""Alembic environment configuration for JobMatch AI.
+"""Alembic environment configuration for JobMatch.
 
 This file configures the Alembic migration environment to work with
-the JobMatch AI database models and PostgreSQL + pgvector.
+the JobMatch database models and PostgreSQL + pgvector.
 """
 
 from logging.config import fileConfig

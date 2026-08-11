@@ -1,4 +1,4 @@
-"""JobMatch AI - FastAPI Application Entry Point.
+﻿"""JobMatch - FastAPI Application Entry Point.
 
 Start the server:
     uvicorn app.main:app --reload
@@ -21,12 +21,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Rate limiter — in-memory store (suitable for single-process dev)
+# Rate limiter - in-memory store (suitable for single-process dev)
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
-    title="JobMatch AI",
-    description="AI-Powered Job Vacancy Aggregator and Personalised Recommendation System",
+    title="JobMatch",
+    description="Job Vacancy Aggregator and Personalised Recommendation System",
     version="0.1.0",
 )
 
@@ -52,13 +52,13 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_db()
-    logger.info("JobMatch AI started")
+    logger.info("JobMatch started")
 
 
 @app.get("/health")
 @limiter.exempt
 def health_check():
-    return {"status": "ok", "service": "JobMatch AI"}
+    return {"status": "ok", "service": "JobMatch"}
 
 
 # Route registration

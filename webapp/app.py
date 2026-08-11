@@ -1,4 +1,4 @@
-"""JobMatch AI - Flask Application Factory.
+"""JobMatch - Flask Application Factory.
 
 Run with:
     python run.py
@@ -10,12 +10,15 @@ proper session-based login system and a real job-portal design.
 import sys
 import os
 import logging
+import re
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flask import Flask
+from flask import Flask, request, jsonify
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from app.database import SessionLocal, init_db
 from app.models.user import User
@@ -30,6 +33,13 @@ login_manager.login_message_category = "info"
 
 # CSRF protection
 csrf = CSRFProtect()
+
+# Rate limiting
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200 per minute"],
+    storage_uri="memory://",
+)
 
 
 def create_app():
@@ -46,6 +56,7 @@ def create_app():
 
     login_manager.init_app(app)
     csrf.init_app(app)
+    limiter.init_app(app)
 
     app.jinja_env.filters["ord"] = ord
 

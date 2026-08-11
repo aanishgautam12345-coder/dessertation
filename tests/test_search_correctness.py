@@ -1,4 +1,4 @@
-"""Phase 0A Regression Tests — Search Correctness and Data-Display Integrity.
+﻿"""Phase 0A Regression Tests - Search Correctness and Data-Display Integrity.
 
 Tests for:
     1. Evidence-backed search for technical queries

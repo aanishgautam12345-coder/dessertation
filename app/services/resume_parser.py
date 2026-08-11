@@ -1,12 +1,5 @@
-"""Resume Parser Service.
-
-Pipeline:
-    1. Extract raw text from uploaded PDF
-    2. Send to OpenAI with a structured extraction prompt
-    3. Parse the LLM's JSON response into profile fields
-    4. Validate and normalize with Pydantic
-    5. Return clean, structured profile data ready to save
-"""
+﻿"""Pulls text out of an uploaded PDF resume, sends it to the model with an extraction
+prompt, and validates the JSON it comes back with into clean profile fields."""
 
 import json
 import re
@@ -78,6 +71,8 @@ class ResumeExtraction(BaseModel):
     @field_validator("skills", mode="before")
     @classmethod
     def _normalize_skills(cls, v):
+        if v is None:
+            return []
         if not isinstance(v, list):
             raise ValueError("Expected a list for skills")
         seen = set()
@@ -94,6 +89,8 @@ class ResumeExtraction(BaseModel):
     @field_validator("preferred_locations", mode="before")
     @classmethod
     def _normalize_locations(cls, v):
+        if v is None:
+            return []
         if not isinstance(v, list):
             raise ValueError("Expected a list for preferred_locations")
         seen = set()
@@ -132,6 +129,8 @@ class ResumeExtraction(BaseModel):
     @field_validator("work_history", mode="before")
     @classmethod
     def _normalize_work_history(cls, v):
+        if v is None:
+            return []
         if not isinstance(v, list):
             raise ValueError("Expected a list for work_history")
         return v
@@ -155,9 +154,9 @@ class ResumeExtraction(BaseModel):
 
 
 def _build_resume_schema() -> dict:
-    """Build JSON Schema for OpenAI structured outputs.
+    """Build JSON Schema for structured outputs.
 
-    Meets OpenAI strict mode requirements:
+    Meets strict mode requirements:
     - all properties in required
     - nullable fields use anyOf with null
     - additionalProperties: false at every level
@@ -199,7 +198,7 @@ def _build_resume_schema() -> dict:
     }
 
 
-# Try multiple PDF libraries — use whichever is installed
+# Try multiple PDF libraries - use whichever is installed
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     """Extract text from a PDF file. Tries multiple libraries."""
 
@@ -273,10 +272,10 @@ Return ONLY a valid JSON object with these fields (use null for anything not fou
   ]
 }
 
-Rules:
-- Extract ALL skills mentioned anywhere (tools, languages, frameworks, soft skills)
-- Estimate experience_years from the work history dates
-- Infer experience_level from years: 0-2=junior, 3-5=mid, 6-9=senior, 10+=lead
+CRITICAL RULES - read carefully:
+- **skills**: You MUST extract ALL skills from the resume. Look for: programming languages, frameworks, libraries, tools, databases, cloud platforms, operating systems, methodologies, soft skills, certifications. Include skills listed in a "Skills" section, mentioned in job descriptions, or implied by technologies used. The skills array MUST NOT be empty if the resume mentions any technologies.
+- **experience_years**: Calculate the total years of professional work experience by finding the earliest and most recent job dates. If work_history has dates, compute the difference. For example, jobs from 2018-2024 = 6 years. MUST be a number, not null, if any work history exists.
+- **experience_level**: Infer from experience_years: 0-2=junior, 3-5=mid, 6-9=senior, 10+=lead
 - For headline, create a concise professional summary if not explicitly stated
 - For career_interests, synthesize from the overall resume theme
 - Return ONLY the JSON, no markdown backticks, no explanation
@@ -346,7 +345,7 @@ def _is_structured_output_unsupported(error: BadRequestError) -> bool:
 
 
 def _parse_response_json(raw_output):
-    """Parse and validate JSON from LLM response text."""
+    """Parse and validate JSON from model response text."""
     if not isinstance(raw_output, str) or not raw_output.strip():
         raise ResumeResponseError("Resume processing is temporarily unavailable. Please try again later.")
 
@@ -377,39 +376,28 @@ def _parse_response_json(raw_output):
 
 
 def parse_resume_with_llm(resume_text: str) -> dict:
-    """Send resume text to OpenAI and get structured profile data back.
-
-    Attempts structured outputs first (text.format with JSON schema).
-    Falls back to plain JSON prompting only if the model explicitly
-    rejects the structured format (BadRequestError).
-
-    Args:
-        resume_text: Raw text extracted from the PDF.
-
-    Returns:
-        Dict with structured profile fields.
-
-    Raises:
-        ResumeConfigurationError: If the API key is missing.
-        ResumeProviderError: If the API call fails.
-        ResumeResponseError: If the response is empty or unparseable.
-    """
+    """Send resume text to the model and get structured profile fields back. Tries
+    structured JSON-schema output first, falls back to plain JSON prompting only if
+    the model rejects the structured format."""
     settings = get_settings()
-    if not settings.openai_api_key:
-        raise ResumeConfigurationError("OPENAI_API_KEY not set in .env")
+    if not settings.groq_api_key:
+        raise ResumeConfigurationError("GROQ_API_KEY not set in .env")
 
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = OpenAI(
+        api_key=settings.groq_api_key,
+        base_url=settings.groq_api_base,
+    )
 
     truncated = resume_text[:6000]
 
     # Attempt 1: Structured outputs with JSON schema
     try:
-        response = _try_structured(client, settings.openai_model, EXTRACTION_PROMPT + truncated)
+        response = _try_structured(client, settings.groq_model, EXTRACTION_PROMPT + truncated)
     except BadRequestError as e:
         if _is_structured_output_unsupported(e):
-            # Structured format not supported by this model — fallback to plain JSON
+            # Structured format not supported by this model - fallback to plain JSON
             try:
-                response = _try_plain(client, settings.openai_model, EXTRACTION_PROMPT + truncated)
+                response = _try_plain(client, settings.groq_model, EXTRACTION_PROMPT + truncated)
             except Exception as fe:
                 raise ResumeProviderError("Resume processing is temporarily unavailable. Please try again later.") from fe
         else:
@@ -428,9 +416,40 @@ def parse_resume_with_llm(resume_text: str) -> dict:
 
 
 def _normalize_parsed(data: dict) -> dict:
-    """Clean and normalize the LLM's output using Pydantic validation."""
+    """Clean and normalize the model's output using Pydantic validation."""
     extraction = ResumeExtraction.model_validate(data)
     return extraction.model_dump()
+
+
+def _fallback_extract_skills(text: str) -> list[str]:
+    """Dictionary-based skill extraction fallback from raw resume text."""
+    try:
+        from app.processing.skills import extract_skills
+        return extract_skills(text)
+    except ImportError:
+        return []
+
+
+def _fallback_extract_experience_years(text: str) -> int | None:
+    """Regex-based experience years extraction from resume text."""
+    text_lower = text.lower()
+
+    # Pattern: "X years of experience" or "X+ years experience"
+    match = re.search(r'(\d{1,2})\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|work)', text_lower)
+    if match:
+        years = int(match.group(1))
+        if 0 <= years <= 50:
+            return years
+
+    # Pattern: date ranges in work history (e.g. "2018 - 2024", "2018-present", "Jan 2018 - Mar 2024")
+    year_pattern = re.findall(r'\b(19|20)\d{2}\b', text)
+    years_found = [int(y) for y in year_pattern if 1970 <= int(y) <= 2099]
+    if len(years_found) >= 2:
+        span = max(years_found) - min(years_found)
+        if 0 <= span <= 50:
+            return span
+
+    return None
 
 
 def process_resume(pdf_bytes: bytes) -> dict:
@@ -453,10 +472,32 @@ def process_resume(pdf_bytes: bytes) -> dict:
             "Make sure it's a text-based PDF, not a scanned image."
         )
 
-    # Step 2: Parse with LLM
+    # Step 2: Parse with model
     profile_data = parse_resume_with_llm(text)
 
-    # Step 3: Add the raw text for reference
+    # Step 3: Fallback extraction for empty skills
+    if not profile_data.get("skills"):
+        profile_data["skills"] = _fallback_extract_skills(text)
+
+    # Step 4: Fallback extraction for missing experience_years
+    if profile_data.get("experience_years") is None:
+        fallback_years = _fallback_extract_experience_years(text)
+        if fallback_years is not None:
+            profile_data["experience_years"] = fallback_years
+
+    # Step 5: Infer experience_level from years if still missing
+    if not profile_data.get("experience_level") and profile_data.get("experience_years") is not None:
+        y = profile_data["experience_years"]
+        if y <= 2:
+            profile_data["experience_level"] = "junior"
+        elif y <= 5:
+            profile_data["experience_level"] = "mid"
+        elif y <= 9:
+            profile_data["experience_level"] = "senior"
+        else:
+            profile_data["experience_level"] = "lead"
+
+    # Step 6: Add the raw text for reference
     profile_data["raw_text_preview"] = text[:500] + "..." if len(text) > 500 else text
 
     return profile_data

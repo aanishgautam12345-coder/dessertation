@@ -1,10 +1,21 @@
-﻿from pydantic_settings import BaseSettings
+import os
+import logging
+from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from functools import lru_cache
+
+logger = logging.getLogger(__name__)
+
+INSECURE_SECRETS = {
+    "change-this-to-a-random-string",
+    "generate_a_real_secret_with_the_command_above",
+    "",
+}
 
 
 class Settings(BaseSettings):
     # Database
-    database_url: str = "postgresql://postgres:dev@localhost:5432/jobmatch"
+    database_url: str = "postgresql://postgres:changeme@localhost:5432/jobmatch"
 
     # Adzuna
     adzuna_app_id: str = ""
@@ -13,12 +24,13 @@ class Settings(BaseSettings):
     # Reed.co.uk
     reed_api_key: str = ""
 
-    # OpenAI
-    openai_api_key: str = ""
-    openai_model: str = "gpt-5.6-sol"
+    # Groq provider
+    groq_api_key: str = ""
+    groq_api_base: str = "https://api.groq.com/openai/v1"
+    groq_model: str = "llama-3.3-70b-versatile"
 
     # JWT Auth
-    secret_key: str = "change-this-to-a-random-string"
+    secret_key: str = ""
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
     app_base_url: str = "http://localhost:5000"
@@ -46,6 +58,21 @@ class Settings(BaseSettings):
     # Embedding model - BGE is optimized for retrieval/search tasks
     embedding_model: str = "BAAI/bge-base-en-v1.5"
     embedding_dim: int = 768
+
+    @field_validator("secret_key")
+    @classmethod
+    def validate_secret_key(cls, v: str) -> str:
+        if v in INSECURE_SECRETS:
+            if os.getenv("ENV") == "production":
+                raise ValueError(
+                    "SECRET_KEY must be a strong random string in production. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+                )
+            logger.warning(
+                "SECURITY: SECRET_KEY is not set or is insecure. "
+                "Generate a real secret for production use."
+            )
+        return v
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

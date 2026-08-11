@@ -1,4 +1,4 @@
-"""Run the Processing Pipeline.
+﻿"""Run the Processing Pipeline.
 
 Takes raw_jobs → cleans, normalises, extracts skills, generates embeddings → writes to jobs table.
 
@@ -35,7 +35,7 @@ def main():
         start = time.time()
 
         print("=" * 60)
-        print("  JobMatch AI — Processing Pipeline")
+        print("  JobMatch - Processing Pipeline")
         print("=" * 60)
 
         if args.no_embeddings:

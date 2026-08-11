@@ -1,13 +1,6 @@
-"""Processing Pipeline — the heart of data transformation.
-
-Takes raw_jobs → processes each through all processors → writes clean jobs
-with embeddings to the jobs table.
-
-Includes:
-- Quality scoring for each processed job
-- IngestionRun tracking for each pipeline execution
-- ProcessingError logging for debugging
-- Structured logging throughout
+﻿"""Runs raw_jobs through title cleaning, salary/location/category normalisation, skill
+extraction and embedding, then writes the clean version to the jobs table. Tracks each
+run via IngestionRun and logs failures to ProcessingError instead of crashing the batch.
 
 Usage:
     python -m scripts.run_processing
@@ -43,17 +36,7 @@ def process_raw_jobs(
     source: str | None = None,
     raw_job_ids: list[uuid.UUID] | None = None,
 ) -> dict:
-    """Process all unprocessed raw_jobs into clean jobs.
-
-    Args:
-        db: Database session.
-        limit: Max number of raw jobs to process (None = all).
-        generate_embeddings: Whether to generate vector embeddings.
-        source: Optional source filter (e.g. "adzuna").
-
-    Returns:
-        Summary dict with counts.
-    """
+    """Process every unprocessed raw_job into a clean Job row. limit=None processes all."""
     run = IngestionRun(
         id=uuid.uuid4(),
         source=source or "pipeline",
@@ -215,7 +198,7 @@ def process_raw_jobs(
             inserted += 1
 
             if i % 50 == 0 or i == total:
-                logger.info(f"  [{i}/{total}] — {inserted} inserted, {skipped_dupes} dupes")
+                logger.info(f"  [{i}/{total}] - {inserted} inserted, {skipped_dupes} dupes")
 
         except Exception as e:
             db.rollback()

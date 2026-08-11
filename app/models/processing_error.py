@@ -1,11 +1,5 @@
-"""Processing Error — logs failures during the ingestion/processing pipeline.
-
-When a raw job record fails processing, the error is logged here instead of
-silently marking the record as processed. This enables:
-- Debugging processing failures
-- Data quality monitoring
-- Retry logic for transient errors
-"""
+"""When a raw job fails processing, we log it here instead of silently marking it
+processed - keeps failures visible and retryable."""
 
 import uuid
 from datetime import datetime

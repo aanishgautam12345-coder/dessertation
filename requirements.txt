@@ -4,6 +4,7 @@ uvicorn[standard]==0.34.0
 flask==3.1.0
 flask-login==0.6.3
 flask-wtf==1.2.2
+flask-limiter==4.1.1
 slowapi==0.1.9
 
 # ── PDF Reading (resume parsing) ──
@@ -17,6 +18,7 @@ alembic==1.14.1
 
 # ── Auth ──
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
 python-multipart==0.0.18
 
@@ -46,9 +48,6 @@ apscheduler==3.11.0
 rapidfuzz==3.11.0
 numpy==1.26.4
 python-dateutil==2.9.0
-
-# ── Frontend ──
-# Streamlit removed — Flask frontend is the primary UI (webapp/)
 
 # ── Dev / Testing ──
 pytest==8.3.4

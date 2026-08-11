@@ -1,7 +1,4 @@
-"""Ingestion Run Log — tracks every import run for monitoring.
-
-Satisfies the 'Import Monitoring' feature requirement.
-"""
+"""One row per ingestion/processing run, for monitoring what happened and when."""
 
 import uuid
 from datetime import datetime
@@ -24,5 +21,5 @@ class IngestionRun(Base):
     records_inserted: Mapped[int] = mapped_column(Integer, default=0)
     records_skipped: Mapped[int] = mapped_column(Integer, default=0)
     errors: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(20), default="running")  # running/completed/failed
+    status: Mapped[str] = mapped_column(String(30), default="running")  # running/completed/completed_with_errors/failed
     error_message: Mapped[str | None] = mapped_column(Text)

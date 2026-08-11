@@ -1,9 +1,7 @@
-"""Location Normalisation Processor.
-
-Extracts structured location info from free text:
+﻿"""Pulls structured location info out of free text:
     (city, country, uk_country, uk_region, county, postcode_area, remote, workplace_type)
 
-Handles:
+Handles things like:
     - "New York, NY, USA"
     - "London, United Kingdom"
     - "Remote"
@@ -17,7 +15,7 @@ import re
 from typing import Optional
 
 
-# ── Remote / Workplace Detection ──
+# - Remote / Workplace Detection -
 
 REMOTE_KEYWORDS = [
     "remote", "work from home", "wfh", "distributed",
@@ -29,7 +27,7 @@ HYBRID_KEYWORDS = ["hybrid", "flexible", "blended"]
 ONSITE_KEYWORDS = ["on-site", "onsite", "in-office", "office-based"]
 
 
-# ── Country Normalisations ──
+# - Country Normalisations -
 
 COUNTRY_ALIASES: dict[str, str] = {
     "us": "United States", "usa": "United States", "united states of america": "United States",
@@ -66,7 +64,7 @@ COUNTRY_ALIASES: dict[str, str] = {
 UK_COUNTRIES = {"england", "scotland", "wales", "northern ireland", "n. ireland"}
 
 
-# ── UK Regions ──
+# - UK Regions -
 
 UK_REGIONS: dict[str, str] = {
     # England
@@ -98,7 +96,7 @@ UK_REGIONS: dict[str, str] = {
 }
 
 
-# ── UK Counties (major ones) ──
+# - UK Counties (major ones) -
 
 UK_COUNTIES: set[str] = {
     # England
@@ -130,7 +128,7 @@ UK_COUNTIES: set[str] = {
 }
 
 
-# ── Postcode Area Patterns ──
+# - Postcode Area Patterns -
 
 # UK postcode areas: 1-2 letters + optional digits
 POSTCODE_AREA_PATTERN = re.compile(
@@ -168,7 +166,7 @@ POSTCODE_AREAS = {
 }
 
 
-# ── US States ──
+# - US States -
 
 US_STATES = {
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -244,15 +242,11 @@ def normalise_location(
     location_text: str | None,
     description: str | None = None,
 ) -> dict:
-    """Normalise a location string into structured components.
+    """Normalise a location string into structured components. description is only
+    used as a fallback signal for remote detection.
 
-    Args:
-        location_text: Raw location string from the job posting.
-        description: Full job description (fallback for remote detection).
-
-    Returns:
-        Dict with keys: city, country, uk_country, uk_region, county,
-                        postcode_area, remote, workplace_type
+    Returns a dict with keys: city, country, uk_country, uk_region, county,
+    postcode_area, remote, workplace_type.
     """
     result: dict = {
         "city": None,
@@ -286,7 +280,7 @@ def normalise_location(
     loc = location_text.strip()
 
     # Remove remote/hybrid prefixes
-    loc = re.sub(r"(?i)^(remote|hybrid|on-?site)\s*[-–—:]\s*", "", loc)
+    loc = re.sub(r"(?i)^(remote|hybrid|on-?site)\s*[-:]\s*", "", loc)
     loc = re.sub(r"(?i)\s*\(?(remote|hybrid|on-?site)\)?$", "", loc)
 
     if not loc.strip():
@@ -327,7 +321,7 @@ def normalise_location(
             # Assume it's a city
             result["city"] = part
 
-    # ── UK-specific enrichment ──
+    # - UK-specific enrichment -
     country_lower = (result["country"] or "").lower()
     full_text = f"{location_text or ''} {description or ''}"
 

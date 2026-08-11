@@ -1,4 +1,4 @@
-"""Profile Routes — view/edit profile, with integrated resume upload."""
+﻿"""Profile Routes - view/edit profile, with integrated resume upload."""
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
@@ -112,7 +112,7 @@ def view_profile():
 @profile_bp.route("/upload-resume", methods=["POST"])
 @login_required
 def upload_resume():
-    """AJAX endpoint — parses an uploaded PDF resume and returns extracted fields.
+    """AJAX endpoint - parses an uploaded PDF resume and returns extracted fields.
 
     The frontend then pre-fills the profile form with this data; the user
     reviews and confirms via the normal Save button.
@@ -133,7 +133,8 @@ def upload_resume():
         return jsonify({"success": True, "data": extracted})
     except InvalidResumeError:
         return jsonify({"error": "Could not parse the uploaded PDF. Make sure it's a text-based resume, not a scanned image."}), 400
-    except (ResumeConfigurationError, ResumeProviderError, ResumeResponseError):
-        return jsonify({"error": "Resume processing is temporarily unavailable. Please try again later."}), 503
-    except Exception:
-        return jsonify({"error": "An unexpected error occurred. Please try again later."}), 500
+    except (ResumeConfigurationError, ResumeProviderError, ResumeResponseError) as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": f"Unexpected error: {exc}"}), 500

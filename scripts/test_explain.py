@@ -1,7 +1,7 @@
-"""Test the RAG Explanation Engine.
+﻿"""Test the Explanation Engine.
 
 Runs the Recommendation Agent, then generates a grounded explanation for
-each top result using OpenAI — the "why this job" feature.
+each top result using Groq - the "why this job" feature.
 
 Usage:
     python -m scripts.test_explain
@@ -25,7 +25,7 @@ def main():
     db = SessionLocal()
     try:
         print("\n" + "="*75)
-        print("  JobMatch AI — RAG Explanation Engine Demo")
+        print("  JobMatch - Explanation Engine Demo")
         print("="*75)
 
         profile = get_or_create_demo_profile(db)
@@ -38,13 +38,13 @@ def main():
             return
 
         print(f"\nGenerating explanations for top {len(recommendations)} recommendations ...")
-        print("(This calls the OpenAI API — needs OPENAI_API_KEY in your .env)\n")
+        print("(This calls the Groq API - needs GROQ_API_KEY in your .env)\n")
 
         for rec in recommendations:
             job = db.query(Job).filter(Job.id == rec["job_id"]).first()
             job_skills = [s.skill for s in db.query(JobSkill).filter(JobSkill.job_id == job.id).all()]
 
-            # Recompute the breakdown (cheap — no embedding call needed here
+            # Recompute the breakdown (cheap - no embedding call needed here
             # since we already have the semantic_similarity from the agent's ranking)
             similarity = rec["breakdown"]["semantic_similarity"] / 100
             breakdown = compute_match_score(profile, job, job_skills, similarity)
@@ -52,10 +52,19 @@ def main():
             explanation = generate_explanation(profile, job, breakdown)
 
             print(f"{'='*75}")
-            print(f"  #{rec['rank']}  {rec['title']}  —  {rec['match_percentage']}% match")
+            print(f"  #{rec['rank']}  {rec['title']}  -  {rec['match_percentage']}% match")
             print(f"  {job.company or 'N/A'}")
             print(f"{'='*75}")
-            print(f"  💬 {explanation}")
+            print(f"  Tier: {explanation.match_tier} | Confidence: {explanation.confidence:.0%}")
+            if explanation.headline:
+                print(f"  Headline: {explanation.headline}")
+            if explanation.strengths:
+                print(f"  Strengths: {'; '.join(explanation.strengths)}")
+            if explanation.gaps:
+                print(f"  Gaps: {'; '.join(explanation.gaps)}")
+            if explanation.recommendation:
+                print(f"  Recommendation: {explanation.recommendation}")
+            print(f"  Full: {explanation.to_text()}")
             print()
 
     finally:

@@ -1,14 +1,20 @@
-"""Security utilities — password hashing and JWT token creation/verification."""
+﻿"""Security utilities - password hashing and JWT token creation/verification."""
 
 import logging
-from datetime import datetime, timedelta
+import os
+from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Use bcrypt with explicit rounds to avoid passlib/bcrypt 5.x compatibility issues
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__rounds=12,
+)
 
 
 def _truncate(password: str) -> str:
@@ -26,10 +32,10 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(data: dict, expires_minutes: int | None = None) -> str:
     settings = get_settings()
-    expire = datetime.utcnow() + timedelta(
+    expire = datetime.now(timezone.utc) + timedelta(
         minutes=expires_minutes or settings.access_token_expire_minutes
     )
-    to_encode = {**data, "exp": expire, "iat": datetime.utcnow()}
+    to_encode = {**data, "exp": expire, "iat": datetime.now(timezone.utc)}
     to_encode.setdefault("purpose", "access")
     # Add jti (JWT ID) for token revocation support
     import uuid

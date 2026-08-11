@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -78,7 +78,7 @@ def reset_password(db: Session, token: str, new_password: str) -> User:
         jti,
         user.id,
         reason="password_reset",
-        expires_at=datetime.utcfromtimestamp(expires_at),
+        expires_at=datetime.fromtimestamp(expires_at, tz=timezone.utc),
     )
     db.commit()
     return user

@@ -1,4 +1,4 @@
-"""Debug Search — Diagnostic tool for investigating search results.
+﻿"""Debug Search - Diagnostic tool for investigating search results.
 
 Usage:
     python scripts/debug_search.py --query "Azure" --limit 20

@@ -91,11 +91,11 @@ def print_recommendations(recommendations: list[dict]):
     print(f"{'='*75}")
 
     if not recommendations:
-        print("  No recommendations found — try loosening the profile criteria.")
+        print("  No recommendations found - try loosening the profile criteria.")
         return
 
     for rec in recommendations:
-        print(f"\n  #{rec['rank']}  {rec['title']}  —  {rec['match_percentage']}% match")
+        print(f"\n  #{rec['rank']}  {rec['title']}  -  {rec['match_percentage']}% match")
         print(f"      Company: {rec['company'] or 'N/A'}")
         loc = rec['location_city'] or rec['location_country'] or ('Remote' if rec['remote'] else 'N/A')
         print(f"      Location: {loc}" + (" (Remote)" if rec['remote'] else ""))
@@ -125,7 +125,7 @@ def main():
     db = SessionLocal()
     try:
         print("\n" + "="*75)
-        print("  JobMatch AI — Recommendation Agent Demo")
+        print("  JobMatch - Recommendation Demo")
         print("="*75)
         print(f"  Profile: {DEMO_PROFILE['headline']}")
         print(f"  Skills: {', '.join(DEMO_PROFILE['skills'])}")

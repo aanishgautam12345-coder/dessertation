@@ -116,6 +116,7 @@ def jobs():
         source = request.args.get("source", "").strip()
         category = request.args.get("category", "").strip()
         status = request.args.get("status", "").strip()
+        min_quality = request.args.get("min_quality", type=float)
         query = db.query(Job)
         if q:
             query = query.filter(or_(Job.title.ilike(f"%{q}%"), Job.company.ilike(f"%{q}%")))
@@ -125,14 +126,121 @@ def jobs():
             query = query.filter(Job.category == category)
         if status in {"active", "archived"}:
             query = query.filter(Job.is_active.is_(status == "active"))
+        if min_quality is not None:
+            query = query.filter(Job.quality_score >= min_quality)
         total = query.count()
         rows = query.order_by(Job.created_at.desc()).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
         return render_template(
             "admin/jobs.html", jobs=rows, page=page, total=total, page_size=PAGE_SIZE,
             q=q, source=source, category=category, status=status, categories=CATEGORIES,
+            min_quality=min_quality,
         )
     finally:
         db.close()
+
+
+@admin_bp.route("/jobs/create", methods=["GET", "POST"])
+@admin_required
+def job_create():
+    if request.method == "POST":
+        db = SessionLocal()
+        try:
+            from app.processing.title import clean_title
+            from app.processing.quality import score_job
+            from app.processing.dedup import generate_dedup_hash
+            from app.services.embedding import generate_embedding, build_job_text
+            from app.models.job import JobSkill
+            import uuid
+
+            title = request.form.get("title", "").strip()
+            if not title:
+                flash("Title is required.", "error")
+                return redirect(url_for("admin.job_create"))
+
+            company = request.form.get("company", "").strip() or None
+            description = request.form.get("description", "").strip() or None
+            requirements = request.form.get("requirements", "").strip() or None
+            responsibilities = request.form.get("responsibilities", "").strip() or None
+            location_city = request.form.get("location_city", "").strip() or None
+            location_country = request.form.get("location_country", "").strip() or None
+            remote = request.form.get("remote") == "on"
+            category = request.form.get("category", "").strip() or None
+            job_type = request.form.get("job_type", "").strip() or None
+            experience_level = request.form.get("experience_level", "").strip() or None
+            salary_min = request.form.get("salary_min", type=float)
+            salary_max = request.form.get("salary_max", type=float)
+            salary_currency = request.form.get("salary_currency", "").strip() or None
+            salary_period = request.form.get("salary_period", "").strip() or None
+            url_val = request.form.get("url", "").strip() or None
+            skills_raw = request.form.get("skills", "").strip()
+            skills_list = [s.strip() for s in skills_raw.split(",") if s.strip()] if skills_raw else []
+
+            title_clean = clean_title(title)
+            dedup_hash = generate_dedup_hash(
+                title_clean, company,
+                f"{location_city or ''} {location_country or ''}".strip(),
+                salary_min, salary_max,
+            )
+
+            existing = db.query(Job).filter(Job.dedup_hash == dedup_hash).first()
+            if existing:
+                flash("A job with identical title, company, location, and salary already exists.", "error")
+                return redirect(url_for("admin.job_create"))
+
+            text_for_embedding = build_job_text(title_clean, description or "", skills_list or None)
+            embedding = generate_embedding(text_for_embedding)
+
+            quality = score_job(
+                title=title_clean, company=company, description=description,
+                location_city=location_city, location_country=location_country,
+                salary_min=salary_min, salary_max=salary_max,
+                category=category, job_type=job_type,
+                experience_level=experience_level, skills=skills_list or None,
+                url=url_val, source="admin",
+            )
+
+            new_job = Job(
+                id=uuid.uuid4(),
+                title=title,
+                title_clean=title_clean,
+                company=company,
+                description=description,
+                requirements=requirements,
+                responsibilities=responsibilities,
+                location_city=location_city,
+                location_country=location_country,
+                remote=remote,
+                category=category,
+                job_type=job_type,
+                experience_level=experience_level,
+                salary_min=salary_min,
+                salary_max=salary_max,
+                salary_currency=salary_currency,
+                salary_period=salary_period,
+                url=url_val,
+                source="admin",
+                dedup_hash=dedup_hash,
+                embedding=embedding,
+                quality_score=quality.overall,
+                processing_version="2.0",
+                is_active=True,
+            )
+            db.add(new_job)
+            db.flush()
+
+            for skill_name in skills_list:
+                db.add(JobSkill(id=uuid.uuid4(), job_id=new_job.id, skill=skill_name))
+
+            db.commit()
+            flash(f"Job created (quality score: {quality.overall:.0f}).", "success")
+            return redirect(url_for("admin.job_detail", job_id=new_job.id))
+        except Exception as exc:
+            db.rollback()
+            flash(f"Error creating job: {exc}", "error")
+            return redirect(url_for("admin.job_create"))
+        finally:
+            db.close()
+    return render_template("admin/job_create.html", categories=CATEGORIES)
 
 
 @admin_bp.route("/jobs/<uuid:job_id>", methods=["GET", "POST"])

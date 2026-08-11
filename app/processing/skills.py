@@ -1,11 +1,6 @@
-"""Skill Extraction Processor.
-
-Extracts skills from job descriptions using dictionary matching with:
-- Confidence scoring (0.0-1.0)
-- Essential vs desirable classification via context keywords
-- Alias mapping for variant spellings
-- Provenance tracking (dictionary match vs text match)
-"""
+"""Pulls skills out of job descriptions via dictionary matching, with a confidence
+score, essential-vs-desirable classification from context keywords, and alias
+mapping for variant spellings (e.g. "reactjs" -> "react")."""
 
 import re
 from dataclasses import dataclass, field
@@ -170,11 +165,7 @@ def _resolve_alias(skill: str) -> str:
 
 
 def normalize_user_skills(skills: list[str]) -> list[str]:
-    """Normalize a list of user-entered skills to canonical forms.
-
-    Applies alias resolution so that e.g. "ReactJS" -> "react", "ML" -> "machine learning".
-    Deduplicates and sorts alphabetically.
-    """
+    """Resolve aliases (e.g. "ReactJS" -> "react"), dedupe, sort alphabetically."""
     seen: set[str] = set()
     result: list[str] = []
     for skill in skills:
@@ -244,15 +235,7 @@ def extract_skills(
     description: str | None,
     existing_skills: str | None = None,
 ) -> list[str]:
-    """Extract skills from text. Returns list of skill name strings.
-
-    Args:
-        description: Job description text.
-        existing_skills: Pre-extracted skills string (from CSV dataset).
-
-    Returns:
-        Deduplicated list of normalised skill strings.
-    """
+    """Extract skills from text, deduplicated and normalised."""
     results = extract_skills_detailed(description, existing_skills)
     return [s.name for s in results]
 
@@ -261,15 +244,7 @@ def extract_skills_detailed(
     description: str | None,
     existing_skills: str | None = None,
 ) -> list[ExtractedSkill]:
-    """Extract skills with full detail (confidence, classification, provenance).
-
-    Args:
-        description: Job description text.
-        existing_skills: Pre-extracted skills string (from CSV dataset).
-
-    Returns:
-        List of ExtractedSkill with metadata.
-    """
+    """Same as extract_skills but returns full metadata (confidence, classification, provenance)."""
     seen: dict[str, ExtractedSkill] = {}
 
     # Parse pre-extracted skills from dataset

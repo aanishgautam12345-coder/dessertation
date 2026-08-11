@@ -1,4 +1,4 @@
-﻿"""Users API â€” profile management for authenticated users."""
+﻿"""Users API - profile management for authenticated users."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator

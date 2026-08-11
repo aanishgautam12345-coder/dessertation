@@ -1,14 +1,6 @@
-"""Ablation Study Runner — evaluate impact of individual components.
-
-Runs the same evaluation queries with different configurations to measure
-the contribution of each component:
-- Semantic scoring only (no skills, location, salary)
-- Skills only (no semantic)
-- No reranking
-- Balanced weights
-- Default weights (baseline)
-
-Outputs a comparison table ready for the dissertation.
+﻿"""Runs the same evaluation queries under different scoring configs (semantic only,
+skills only, no reranking, balanced weights, default) to see how much each
+component actually contributes, and prints a comparison table.
 
 Usage:
     python -m scripts.run_ablation
@@ -91,7 +83,7 @@ def run_ablation_for_config(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ablation study for JobMatch AI")
+    parser = argparse.ArgumentParser(description="Ablation study for JobMatch")
     parser.add_argument(
         "--config",
         default="all",
@@ -124,7 +116,7 @@ def main():
 
     try:
         print(f"\n{'='*80}")
-        print(f"  ABLATION STUDY — {len(configs)} configurations")
+        print(f"  ABLATION STUDY - {len(configs)} configurations")
         print(f"{'='*80}")
 
         for config_name, weights in configs.items():

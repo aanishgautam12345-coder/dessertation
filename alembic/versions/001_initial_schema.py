@@ -1,6 +1,6 @@
-"""Initial schema — captures the complete JobMatch AI database structure.
+﻿"""Initial schema - captures the complete JobMatch database structure.
 
-This migration creates all tables for the JobMatch AI system including:
+This migration creates all tables for the JobMatch system including:
 - Core entities: raw_jobs, jobs, job_skills, users, user_profiles
 - Source tracking: job_postings
 - Recommendations: recommendations, recommendation_runs, saved_jobs

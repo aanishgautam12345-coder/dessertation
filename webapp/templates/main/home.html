@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% block title %}Home — JobMatch AI{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}Home - JobMatch{% endblock %}
 
 {% block content %}
 <div class="max-w-[1128px] mx-auto px-4 py-6">
@@ -32,7 +32,9 @@
             </div>
 
             <div class="flex items-center justify-between mb-3">
-                {% if feed_source == 'saved' %}
+                {% if feed_source == 'profile' %}
+                <h2 class="text-base font-semibold text-[#000000e6]">Recommended for you</h2>
+                {% elif feed_source == 'saved' %}
                 <h2 class="text-base font-semibold text-[#000000e6]">Jobs like your saved ones</h2>
                 {% else %}
                 <h2 class="text-base font-semibold text-[#000000e6]">Recently added</h2>
@@ -40,7 +42,9 @@
                 <a href="{{ url_for('jobs.recent') }}" class="text-sm text-brand-600 font-medium hover:underline">View all</a>
             </div>
 
-            {% if feed_source == 'saved' %}
+            {% if feed_source == 'profile' %}
+            <p class="text-xs text-[#999589] mb-3">Based on your profile skills and preferences</p>
+            {% elif feed_source == 'saved' %}
             <p class="text-xs text-[#999589] mb-3">Based on the {{ saved_ids|length }} job{{ 's' if saved_ids|length != 1 }} you saved</p>
             {% endif %}
 

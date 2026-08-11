@@ -1,11 +1,11 @@
-"""Auth API — Registration, Login, Logout, and Password Recovery.
+﻿"""Auth API - Registration, Login, Logout, and Password Recovery.
 
 Endpoints:
-    POST /api/auth/register  — create a new user account
-    POST /api/auth/login     — authenticate and receive JWT token
-    POST /api/auth/logout     — revoke the current token
-    POST /api/auth/forgot    — request a password reset token
-    POST /api/auth/reset     — reset password using the token
+    POST /api/auth/register  - create a new user account
+    POST /api/auth/login     - authenticate and receive JWT token
+    POST /api/auth/logout     - revoke the current token
+    POST /api/auth/forgot    - request a password reset token
+    POST /api/auth/reset     - reset password using the token
 
 Rate limited: 5 attempts/minute on login/register, 3/minute on forgot/reset.
 """

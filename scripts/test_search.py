@@ -1,6 +1,6 @@
-"""Interactive Semantic Search Demo.
+﻿"""Interactive Semantic Search Demo.
 
-Run this to test your semantic search engine directly from the terminal —
+Run this to test your semantic search engine directly from the terminal -
 no API or frontend needed yet. Great for a quick sanity check and demo.
 
 Usage:
@@ -40,12 +40,12 @@ def print_results(title: str, results: list[dict]):
 
 
 def run_comparison(db, query: str):
-    """Run both semantic and keyword search side by side — this IS your
+    """Run both semantic and keyword search side by side - this IS your
     dissertation's core comparison."""
     print(f"\n\n🔍 Query: \"{query}\"")
 
     semantic_results = semantic_search(db, query, limit=5)
-    print_results("🧠 SEMANTIC SEARCH (AI-powered, ranked by meaning)", semantic_results)
+    print_results("🧠 SEMANTIC SEARCH (ranked by meaning)", semantic_results)
 
     keyword_results = keyword_search(db, query, limit=5)
     print_results("🔤 KEYWORD SEARCH (traditional baseline)", keyword_results)
@@ -66,7 +66,7 @@ def main():
         else:
             # Interactive mode
             print("\n" + "="*70)
-            print("  JobMatch AI — Semantic Search Demo")
+            print("  JobMatch - Semantic Search Demo")
             print("="*70)
             print("  Type a search query (or 'quit' to exit)")
             print("  Examples: 'remote python developer', 'senior data scientist'")

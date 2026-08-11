@@ -1,4 +1,4 @@
-"""Phase 3 — Search infrastructure: HNSW index, full-text search, reranker support.
+﻿"""Phase 3 - Search infrastructure: HNSW index, full-text search, reranker support.
 
 Adds:
 - HNSW index on jobs.embedding for approximate nearest neighbor search

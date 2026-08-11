@@ -1,23 +1,85 @@
-"""Search Service — Evidence-backed retrieval with semantic fallback.
-
-Provides three search modes:
-    1. keyword_search(): PostgreSQL full-text search (baseline)
-    2. semantic_search(): pure vector similarity search
-    3. evidence_search(): lexical-first retrieval with match evidence and semantic fallback
-
-The evidence_search is the primary mode for short technical queries (e.g. "Azure",
-"Python", "Docker"). It requires verifiable lexical evidence before returning a
-result, and only falls back to semantic similarity when insufficient evidence-backed
-results are found.
-"""
+﻿"""Job search: keyword_search (plain Postgres full-text), semantic_search (vector
+similarity), and evidence_search (lexical-first, only falls back to semantic when a
+short/technical query like "Azure" or "Docker" doesn't have enough direct matches)."""
 
 import re
 from dataclasses import dataclass, field
-from sqlalchemy import select, func, text, or_
+from sqlalchemy import Float, select, func, text, or_
 from sqlalchemy.orm import Session
 
 from app.models.job import Job, JobSkill
 from app.services.embedding import generate_embedding
+
+
+# ── pgvector Similarity Helpers ──
+
+
+def _compute_similarity_with_pgvector(
+    db: Session,
+    query_embedding: list[float],
+    job_ids: list | None = None,
+    limit: int = 10,
+) -> list[tuple[str, float]]:
+    """Use pgvector's <=> cosine distance operator for similarity search.
+
+    Returns list of (job_id_str, similarity) tuples sorted by similarity descending.
+    Falls back to Python numpy if pgvector operators fail.
+    """
+    try:
+        distance_expr = Job.embedding.op("<=>", return_type=Float)(query_embedding)
+
+        stmt = (
+            select(Job.id, distance_expr.label("distance"))
+            .where(Job.embedding.isnot(None), Job.is_active.is_(True))
+        )
+        if job_ids:
+            stmt = stmt.where(Job.id.in_(job_ids))
+
+        stmt = stmt.order_by(distance_expr.asc()).limit(limit)
+        results = db.execute(stmt).all()
+
+        return [(str(row.id), 1.0 - row.distance) for row in results]
+    except Exception:
+        # Fallback to Python cosine similarity
+        return _compute_similarity_python(db, query_embedding, job_ids, limit)
+
+
+def _compute_similarity_python(
+    db: Session,
+    query_embedding: list[float],
+    job_ids: list | None = None,
+    limit: int = 10,
+) -> list[tuple[str, float]]:
+    """Fallback: compute cosine similarity in Python using numpy."""
+    import numpy as np
+
+    stmt = select(Job.id, Job.embedding).where(
+        Job.embedding.isnot(None), Job.is_active.is_(True)
+    )
+    if job_ids:
+        stmt = stmt.where(Job.id.in_(job_ids))
+
+    rows = db.execute(stmt).all()
+
+    q_vec = np.array(query_embedding, dtype=np.float32)
+    q_norm = np.linalg.norm(q_vec)
+    if q_norm == 0:
+        return []
+
+    scored = []
+    for row in rows:
+        emb = row.embedding
+        if emb is None:
+            continue
+        emb_vec = np.array(emb, dtype=np.float32)
+        emb_norm = np.linalg.norm(emb_vec)
+        if emb_norm == 0:
+            continue
+        sim = float(np.dot(q_vec, emb_vec) / (q_norm * emb_norm))
+        scored.append((str(row.id), sim))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:limit]
 
 
 # ── Technical Query Aliases ──
@@ -178,6 +240,11 @@ EVIDENCE_MIN_RESULTS = 5       # Minimum evidence-backed results before fallback
 SEMANTIC_FALLBACK_LIMIT = 10   # Max semantic fallback results
 TECH_QUERY_MIN_LENGTH = 1      # Queries with this many tokens or fewer are "short"
 TECH_QUERY_MAX_LENGTH = 3      # Max tokens to be considered a technical query
+MIN_QUALITY_SCORE = 40.0       # Jobs below this score are excluded from user-facing results.
+                               # Derived from the 173-job distribution: min=38.75, avg=48.6, P25=44.75.
+                               # Threshold of 40 catches the single job at 38.75 (genuinely
+                               # incomplete: missing description, no salary, sparse metadata)
+                               # while preserving 172/173 jobs. Admin views are unaffected.
 
 
 def _normalise_query(query: str) -> str:
@@ -186,6 +253,41 @@ def _normalise_query(query: str) -> str:
     q = re.sub(r"[^\w\s#+.]", " ", q)   # keep # and . for C# and .NET
     q = re.sub(r"\s+", " ", q).strip()
     return q
+
+
+def _filter_by_quality(
+    db: Session, results: list[SearchResult], min_score: float = MIN_QUALITY_SCORE
+) -> list[SearchResult]:
+    """Remove results whose jobs have quality_score below the threshold.
+
+    Fetches scores in a single batch query for efficiency.
+    """
+    if not results or min_score <= 0:
+        return results
+    job_ids = [r.id for r in results]
+    rows = (
+        db.query(Job.id, Job.quality_score)
+        .filter(Job.id.in_(job_ids), Job.quality_score.isnot(None))
+        .all()
+    )
+    scores = {str(row.id): row.quality_score for row in rows}
+    return [r for r in results if scores.get(r.id, 100.0) >= min_score]
+
+
+def _filter_dicts_by_quality(
+    db: Session, results: list[dict], min_score: float = MIN_QUALITY_SCORE
+) -> list[dict]:
+    """Remove dict results whose jobs have quality_score below the threshold."""
+    if not results or min_score <= 0:
+        return results
+    job_ids = [r["id"] for r in results]
+    rows = (
+        db.query(Job.id, Job.quality_score)
+        .filter(Job.id.in_(job_ids), Job.quality_score.isnot(None))
+        .all()
+    )
+    scores = {str(row.id): row.quality_score for row in rows}
+    return [r for r in results if scores.get(r["id"], 100.0) >= min_score]
 
 
 def _is_technical_query(query: str) -> bool:
@@ -221,23 +323,28 @@ def _get_skill_aliases(query: str) -> set[str]:
     return {q_lower}
 
 
+def _escape_like(value: str) -> str:
+    """Escape special LIKE characters to prevent pattern injection."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _build_lexical_evidence_query(query: str):
     """Build a SQL query that searches for lexical evidence of the query."""
     aliases = _get_aliases(query)
     alias_conditions = []
     for alias in aliases:
-        pattern = f"%{alias}%"
-        alias_conditions.append(Job.title.ilike(pattern))
-        alias_conditions.append(Job.description.ilike(pattern))
-        alias_conditions.append(Job.description_clean.ilike(pattern))
-        alias_conditions.append(Job.requirements.ilike(pattern))
-        alias_conditions.append(Job.responsibilities.ilike(pattern))
+        pattern = f"%{_escape_like(alias)}%"
+        alias_conditions.append(Job.title.ilike(pattern, escape="\\"))
+        alias_conditions.append(Job.description.ilike(pattern, escape="\\"))
+        alias_conditions.append(Job.description_clean.ilike(pattern, escape="\\"))
+        alias_conditions.append(Job.requirements.ilike(pattern, escape="\\"))
+        alias_conditions.append(Job.responsibilities.ilike(pattern, escape="\\"))
 
     # Also search the job_skills table for skill matches
     skill_aliases = _get_skill_aliases(query)
     skill_conditions = []
     for skill_alias in skill_aliases:
-        skill_conditions.append(func.lower(JobSkill.skill).like(f"%{skill_alias}%"))
+        skill_conditions.append(func.lower(JobSkill.skill).like(f"%{_escape_like(skill_alias)}%", escape="\\"))
 
     return alias_conditions, skill_conditions
 
@@ -423,6 +530,125 @@ def _group_duplicates(results: list[SearchResult]) -> list[SearchResult]:
     return results
 
 
+def _collapse_duplicates(results: list[SearchResult], db: Session | None = None) -> list[SearchResult]:
+    """Keep only the best representative from each duplicate_group.
+
+    For each group, keeps the result with the highest ranking_score.
+    If scores tie and db is available, uses quality_score as tiebreaker.
+    Non-grouped results (duplicate_group is None) pass through unchanged.
+    """
+    # Separate grouped and non-grouped
+    ungrouped = [r for r in results if r.duplicate_group is None]
+    grouped: dict[int, list[SearchResult]] = {}
+    for r in results:
+        if r.duplicate_group is not None:
+            grouped.setdefault(r.duplicate_group, []).append(r)
+
+    if not grouped:
+        return results
+
+    # Optionally fetch quality_scores for tiebreaking
+    quality_scores: dict[str, float] = {}
+    if db and grouped:
+        all_ids = [r.id for grp in grouped.values() for r in grp]
+        rows = (
+            db.query(Job.id, Job.quality_score)
+            .filter(Job.id.in_(all_ids), Job.quality_score.isnot(None))
+            .all()
+        )
+        quality_scores = {str(row.id): row.quality_score for row in rows}
+
+    collapsed = list(ungrouped)
+    for group_idx, members in grouped.items():
+        # Pick the best: highest ranking_score, then highest quality_score, then first
+        best = max(
+            members,
+            key=lambda r: (
+                r.ranking_score,
+                quality_scores.get(r.id, 100.0),
+            ),
+        )
+        collapsed.append(best)
+
+    # Sort by ranking_score descending to maintain order
+    collapsed.sort(key=lambda r: r.ranking_score, reverse=True)
+    return collapsed
+
+
+def _collapse_dict_duplicates(results: list[dict], db: Session | None = None) -> list[dict]:
+    """Collapse near-duplicate dict results, keeping the best from each group.
+
+    Uses company+title similarity (same thresholds as _group_duplicates).
+    For tiebreaking, uses quality_score if db is available.
+    """
+    from rapidfuzz import fuzz
+
+    if len(results) <= 1:
+        return results
+
+    groups: list[list[int]] = []
+    assigned = set()
+
+    for i, r_i in enumerate(results):
+        if i in assigned:
+            continue
+        group = [i]
+        norm_comp_i = _normalise_company(r_i.get("company"))
+        norm_title_i = _normalise_title(r_i.get("title"))
+
+        for j in range(i + 1, len(results)):
+            if j in assigned:
+                continue
+            r_j = results[j]
+            norm_comp_j = _normalise_company(r_j.get("company"))
+            norm_title_j = _normalise_title(r_j.get("title"))
+
+            comp_sim = fuzz.token_set_ratio(norm_comp_i, norm_comp_j) / 100.0
+            if comp_sim < 0.80:
+                continue
+            title_sim = fuzz.token_set_ratio(norm_title_i, norm_title_j) / 100.0
+            if title_sim < 0.60:
+                continue
+
+            group.append(j)
+            assigned.add(j)
+
+        if len(group) > 1:
+            groups.append(group)
+        assigned.add(i)
+
+    if not groups:
+        return results
+
+    # Fetch quality scores for tiebreaking
+    quality_scores: dict[str, float] = {}
+    if db:
+        all_ids = [results[idx]["id"] for grp in groups for idx in grp]
+        rows = (
+            db.query(Job.id, Job.quality_score)
+            .filter(Job.id.in_(all_ids), Job.quality_score.isnot(None))
+            .all()
+        )
+        quality_scores = {str(row.id): row.quality_score for row in rows}
+
+    # For each group, keep the best (highest ranking_score, then quality_score)
+    to_remove = set()
+    for group in groups:
+        members = [(idx, results[idx]) for idx in group]
+        members.sort(
+            key=lambda x: (
+                x[1].get("ranking_score", 0),
+                quality_scores.get(x[1]["id"], 100.0),
+            ),
+            reverse=True,
+        )
+        # Keep the first (best), mark the rest for removal
+        for idx, _ in members[1:]:
+            to_remove.add(idx)
+
+    return [r for i, r in enumerate(results) if i not in to_remove]
+
+
 def format_salary_display(
     salary_min: float | None,
     salary_max: float | None,
@@ -486,25 +712,10 @@ def evidence_search(
     min_semantic_results: int = EVIDENCE_MIN_RESULTS,
     enable_semantic_fallback: bool = True,
 ) -> list[dict]:
-    """Evidence-backed search with controlled semantic fallback.
-
-    For short technical queries (e.g. "Azure", "Python", "Docker"):
-    1. First require verifiable lexical evidence (title, skills, requirements, description)
-    2. Only fall back to semantic similarity if insufficient evidence-backed results
-    3. All fallback results are clearly labelled as semantic_fallback
-
-    For longer natural-language queries, falls back to semantic search directly.
-
-    Args:
-        db: Database session.
-        query: Search query.
-        limit: Max results to return.
-        min_semantic_results: Min evidence results before enabling fallback.
-        enable_semantic_fallback: Whether to use semantic fallback at all.
-
-    Returns:
-        List of dicts with search results, scores, and match evidence.
-    """
+    """Short/technical queries need real lexical evidence (title, skills, requirements,
+    description) before we show a result; only fall back to semantic similarity if there
+    aren't enough matches, and label those clearly as semantic_fallback. Longer
+    natural-language queries skip straight to semantic search."""
     query_clean = _normalise_query(query)
     if not query_clean:
         return []
@@ -513,7 +724,9 @@ def evidence_search(
 
     if not is_tech:
         # Long natural-language query: use semantic search directly
-        return _semantic_search_with_evidence(db, query, limit)
+        semantic_results = _semantic_search_with_evidence(db, query, limit)
+        semantic_results = _collapse_dict_duplicates(semantic_results, db)
+        return _filter_dicts_by_quality(db, semantic_results)
 
     # ── Stage 1: Lexical evidence retrieval ──
     aliases = _get_aliases(query)
@@ -626,7 +839,7 @@ def evidence_search(
             sr_dict["matched_terms"] = []
             sr_dict["matched_fields"] = []
             sr_dict["match_evidence"] = [
-                {"field": "note", "text": "No direct lexical evidence found for this query — matched by semantic similarity."}
+                {"field": "note", "text": "No direct lexical evidence found for this query - matched by semantic similarity."}
             ]
             sr_dict["search_relevance_score"] = max(sr_dict["search_relevance_score"] * 0.5, 20.0)
             sr_dict["ranking_score"] = sr_dict["search_relevance_score"]
@@ -652,13 +865,17 @@ def evidence_search(
                 match_type="semantic_fallback",
                 matched_terms=[],
                 matched_fields=[],
-                match_evidence=[MatchEvidence(field="note", text="No direct lexical evidence found for this query — matched by semantic similarity.")],
+                match_evidence=[MatchEvidence(field="note", text="No direct lexical evidence found for this query - matched by semantic similarity.")],
             )
             results.append(sr)
             existing_ids.add(sr.id)
 
     # Deduplicate at result level
     results = _group_duplicates(results[:limit])
+    results = _collapse_duplicates(results, db)
+
+    # Filter out low-quality jobs
+    results = _filter_by_quality(db, results)
 
     return [r.to_dict() for r in results]
 
@@ -668,8 +885,54 @@ def _semantic_search_with_evidence(
 ) -> list[dict]:
     """Semantic search that returns results in SearchResult-compatible dict format."""
     query_embedding = generate_embedding(query, is_query=True)
-    distance = Job.embedding.cosine_distance(query_embedding)
 
+    # Use pgvector cosine distance for similarity scoring
+    try:
+        distance_expr = Job.embedding.op("<=>", return_type=Float)(query_embedding)
+        stmt = (
+            select(
+                Job.id, Job.title, Job.title_clean, Job.company,
+                Job.location_city, Job.location_country, Job.remote,
+                Job.salary_min, Job.salary_max, Job.salary_currency,
+                Job.salary_period, Job.original_salary_text,
+                Job.category, Job.job_type, Job.url, Job.source,
+                distance_expr.label("distance"),
+            )
+            .where(Job.embedding.isnot(None), Job.is_active.is_(True))
+            .order_by(distance_expr.asc())
+            .limit(limit)
+        )
+        rows = db.execute(stmt).all()
+        return [
+            {
+                "id": str(row.id),
+                "title": row.title_clean or row.title,
+                "company": row.company,
+                "location_city": row.location_city,
+                "location_country": row.location_country,
+                "remote": row.remote,
+                "salary_min": row.salary_min,
+                "salary_max": row.salary_max,
+                "salary_currency": row.salary_currency,
+                "salary_period": getattr(row, "salary_period", None),
+                "original_salary_text": getattr(row, "original_salary_text", None),
+                "category": row.category,
+                "job_type": row.job_type,
+                "url": row.url,
+                "source": row.source,
+                "search_relevance_score": round((1.0 - row.distance) * 100, 1),
+                "ranking_score": round((1.0 - row.distance) * 100, 1),
+                "match_type": "semantic_fallback",
+                "matched_terms": [],
+                "matched_fields": [],
+                "match_evidence": [],
+            }
+            for row in rows
+        ]
+    except Exception:
+        pass
+
+    # Fallback: Python cosine similarity
     stmt = (
         select(
             Job.id, Job.title, Job.title_clean, Job.company,
@@ -677,14 +940,30 @@ def _semantic_search_with_evidence(
             Job.salary_min, Job.salary_max, Job.salary_currency,
             Job.salary_period, Job.original_salary_text,
             Job.category, Job.job_type, Job.url, Job.source,
-            (1 - distance).label("similarity"),
+            Job.embedding,
         )
         .where(Job.embedding.isnot(None), Job.is_active.is_(True))
-        .order_by(distance)
-        .limit(limit)
     )
 
-    results = db.execute(stmt).all()
+    rows = db.execute(stmt).all()
+
+    import numpy as np
+    q_vec = np.array(query_embedding, dtype=np.float32)
+    q_norm = np.linalg.norm(q_vec)
+
+    scored = []
+    for row in rows:
+        emb = row.embedding
+        if emb is None:
+            continue
+        emb_vec = np.array(emb, dtype=np.float32)
+        emb_norm = np.linalg.norm(emb_vec)
+        if emb_norm == 0:
+            continue
+        sim = float(np.dot(q_vec, emb_vec) / (q_norm * emb_norm)) if q_norm > 0 else 0.0
+        scored.append((row, sim))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
 
     return [
         {
@@ -703,21 +982,21 @@ def _semantic_search_with_evidence(
             "job_type": row.job_type,
             "url": row.url,
             "source": row.source,
-            "search_relevance_score": round(float(row.similarity) * 100, 1),
-            "ranking_score": round(float(row.similarity) * 100, 1),
+            "search_relevance_score": round(sim * 100, 1),
+            "ranking_score": round(sim * 100, 1),
             "match_type": "semantic_fallback",
             "matched_terms": [],
             "matched_fields": [],
             "match_evidence": [],
         }
-        for row in results
+        for row, sim in scored[:limit]
     ]
 
 
 # ── Legacy functions (preserved for backward compatibility) ──
 
 def keyword_search(db: Session, query: str, limit: int = 10) -> list[dict]:
-    """PostgreSQL full-text search — the KEYWORD BASELINE for comparison."""
+    """PostgreSQL full-text search - the KEYWORD BASELINE for comparison."""
     words = [w.strip() for w in query.split() if w.strip()]
     if not words:
         return []
@@ -740,7 +1019,7 @@ def keyword_search(db: Session, query: str, limit: int = 10) -> list[dict]:
 
     results = db.execute(stmt).all()
 
-    return [
+    result_list = [
         {
             "id": str(row.id),
             "title": row.title_clean or row.title,
@@ -765,6 +1044,9 @@ def keyword_search(db: Session, query: str, limit: int = 10) -> list[dict]:
         for row in results
     ]
 
+    result_list = _collapse_dict_duplicates(result_list, db)
+    return _filter_dicts_by_quality(db, result_list)
+
 
 def semantic_search(
     db: Session,
@@ -774,8 +1056,60 @@ def semantic_search(
 ) -> list[dict]:
     """Search jobs by semantic similarity to a natural language query."""
     query_embedding = generate_embedding(query, is_query=True)
-    distance = Job.embedding.cosine_distance(query_embedding)
 
+    # Use pgvector cosine distance for similarity scoring
+    try:
+        distance_expr = Job.embedding.op("<=>", return_type=Float)(query_embedding)
+        min_distance = 1.0 - min_similarity if min_similarity < 1.0 else 0.0
+
+        stmt = (
+            select(
+                Job.id, Job.title, Job.title_clean, Job.company,
+                Job.location_city, Job.location_country, Job.remote,
+                Job.salary_min, Job.salary_max, Job.salary_currency,
+                Job.salary_period, Job.original_salary_text,
+                Job.category, Job.job_type, Job.url, Job.source,
+                distance_expr.label("distance"),
+            )
+            .where(Job.embedding.isnot(None), Job.is_active.is_(True))
+            .where(distance_expr <= 1.0 - min_similarity)
+            .order_by(distance_expr.asc())
+            .limit(limit)
+        )
+        rows = db.execute(stmt).all()
+        result_list = [
+            {
+                "id": str(row.id),
+                "title": row.title_clean or row.title,
+                "company": row.company,
+                "location_city": row.location_city,
+                "location_country": row.location_country,
+                "remote": row.remote,
+                "salary_min": row.salary_min,
+                "salary_max": row.salary_max,
+                "salary_currency": row.salary_currency,
+                "salary_period": getattr(row, "salary_period", None),
+                "original_salary_text": getattr(row, "original_salary_text", None),
+                "category": row.category,
+                "job_type": row.job_type,
+                "url": row.url,
+                "source": row.source,
+                "similarity": round(1.0 - row.distance, 4),
+                "search_relevance_score": round((1.0 - row.distance) * 100, 1),
+                "ranking_score": round((1.0 - row.distance) * 100, 1),
+                "match_type": "semantic",
+                "matched_terms": [],
+                "matched_fields": [],
+                "match_evidence": [],
+            }
+            for row in rows
+        ]
+        result_list = _collapse_dict_duplicates(result_list, db)
+        return _filter_dicts_by_quality(db, result_list)
+    except Exception:
+        pass
+
+    # Fallback: Python cosine similarity
     stmt = (
         select(
             Job.id, Job.title, Job.title_clean, Job.company,
@@ -783,18 +1117,27 @@ def semantic_search(
             Job.salary_min, Job.salary_max, Job.salary_currency,
             Job.salary_period, Job.original_salary_text,
             Job.category, Job.job_type, Job.url, Job.source,
-            (1 - distance).label("similarity"),
+            Job.embedding,
         )
         .where(Job.embedding.isnot(None), Job.is_active.is_(True))
-        .order_by(distance)
-        .limit(limit)
     )
 
-    results = db.execute(stmt).all()
+    rows = db.execute(stmt).all()
+
+    import numpy as np
+    q_vec = np.array(query_embedding, dtype=np.float32)
+    q_norm = np.linalg.norm(q_vec)
 
     jobs = []
-    for row in results:
-        similarity = float(row.similarity)
+    for row in rows:
+        emb = row.embedding
+        if emb is None:
+            continue
+        emb_vec = np.array(emb, dtype=np.float32)
+        emb_norm = np.linalg.norm(emb_vec)
+        if emb_norm == 0:
+            continue
+        similarity = float(np.dot(q_vec, emb_vec) / (q_norm * emb_norm)) if q_norm > 0 else 0.0
         if similarity < min_similarity:
             continue
         jobs.append({
@@ -822,7 +1165,8 @@ def semantic_search(
             "match_evidence": [],
         })
 
-    return jobs
+    jobs = _collapse_dict_duplicates(jobs, db)
+    return _filter_dicts_by_quality(db, jobs)
 
 
 def hybrid_search(
@@ -837,31 +1181,76 @@ def hybrid_search(
 ) -> list[dict]:
     """Semantic search combined with structured SQL filters and optional reranking."""
     query_embedding = generate_embedding(query, is_query=True)
-    distance = Job.embedding.cosine_distance(query_embedding)
 
-    stmt = select(
-        Job.id, Job.title, Job.title_clean, Job.company,
-        Job.location_city, Job.location_country, Job.remote,
-        Job.salary_min, Job.salary_max, Job.salary_currency,
-        Job.salary_period, Job.original_salary_text,
-        Job.category, Job.job_type, Job.url, Job.source,
-        Job.description,
-        (1 - distance).label("similarity"),
-    ).where(Job.embedding.isnot(None), Job.is_active.is_(True))
+    # Use pgvector cosine distance for similarity scoring
+    try:
+        distance_expr = Job.embedding.op("<=>", return_type=Float)(query_embedding)
+        stmt = select(
+            Job.id, Job.title, Job.title_clean, Job.company,
+            Job.location_city, Job.location_country, Job.remote,
+            Job.salary_min, Job.salary_max, Job.salary_currency,
+            Job.salary_period, Job.original_salary_text,
+            Job.category, Job.job_type, Job.url, Job.source,
+            Job.description,
+            distance_expr.label("distance"),
+        ).where(Job.embedding.isnot(None), Job.is_active.is_(True))
 
-    if location_country:
-        stmt = stmt.where(Job.location_country.ilike(f"%{location_country}%"))
-    if remote_only:
-        stmt = stmt.where(Job.remote.is_(True))
-    if category:
-        stmt = stmt.where(Job.category == category)
-    if min_salary:
-        stmt = stmt.where(Job.salary_max >= min_salary)
+        if location_country:
+            stmt = stmt.where(Job.location_country.ilike(f"%{_escape_like(location_country)}%", escape="\\"))
+        if remote_only:
+            stmt = stmt.where(Job.remote.is_(True))
+        if category:
+            stmt = stmt.where(Job.category == category)
+        if min_salary:
+            stmt = stmt.where(Job.salary_max >= min_salary)
 
-    fetch_limit = limit * 3 if rerank else limit
-    stmt = stmt.order_by(distance).limit(fetch_limit)
+        fetch_limit = limit * 3 if rerank else limit
+        stmt = stmt.order_by(distance_expr.asc()).limit(fetch_limit)
+        rows = db.execute(stmt).fetchall()
 
-    results = db.execute(stmt).all()
+        scored = [(row, 1.0 - row.distance) for row in rows]
+    except Exception:
+        # Fallback: Python cosine similarity
+        stmt = select(
+            Job.id, Job.title, Job.title_clean, Job.company,
+            Job.location_city, Job.location_country, Job.remote,
+            Job.salary_min, Job.salary_max, Job.salary_currency,
+            Job.salary_period, Job.original_salary_text,
+            Job.category, Job.job_type, Job.url, Job.source,
+            Job.description,
+            Job.embedding,
+        ).where(Job.embedding.isnot(None), Job.is_active.is_(True))
+
+        if location_country:
+            stmt = stmt.where(Job.location_country.ilike(f"%{_escape_like(location_country)}%", escape="\\"))
+        if remote_only:
+            stmt = stmt.where(Job.remote.is_(True))
+        if category:
+            stmt = stmt.where(Job.category == category)
+        if min_salary:
+            stmt = stmt.where(Job.salary_max >= min_salary)
+
+        fetch_limit = limit * 3 if rerank else limit
+        rows = db.execute(stmt).fetchall()
+
+        import numpy as np
+        q_vec = np.array(query_embedding, dtype=np.float32)
+        q_norm = np.linalg.norm(q_vec)
+
+        scored = []
+        for row in rows:
+            emb = row.embedding
+            if emb is None:
+                continue
+            emb_vec = np.array(emb, dtype=np.float32)
+            emb_norm = np.linalg.norm(emb_vec)
+            if emb_norm == 0:
+                continue
+            sim = float(np.dot(q_vec, emb_vec) / (q_norm * emb_norm)) if q_norm > 0 else 0.0
+            scored.append((row, sim))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    scored = scored[:fetch_limit]
 
     jobs = [
         {
@@ -881,15 +1270,15 @@ def hybrid_search(
             "url": row.url,
             "source": row.source,
             "description": row.description or "",
-            "similarity": round(float(row.similarity), 4),
-            "search_relevance_score": round(float(row.similarity) * 100, 1),
-            "ranking_score": round(float(row.similarity) * 100, 1),
+            "similarity": round(sim, 4),
+            "search_relevance_score": round(sim * 100, 1),
+            "ranking_score": round(sim * 100, 1),
             "match_type": "semantic",
             "matched_terms": [],
             "matched_fields": [],
             "match_evidence": [],
         }
-        for row in results
+        for row, sim in scored
     ]
 
     if rerank and jobs:
@@ -913,7 +1302,8 @@ def hybrid_search(
                 normalized = max(0, min(1, (job["rerank_score"] + 10) / 20))
                 job["rerank_percentage"] = round(normalized * 100, 1)
 
-    return jobs
+    jobs = _collapse_dict_duplicates(jobs, db)
+    return _filter_dicts_by_quality(db, jobs)
 
 
 def find_similar_jobs(db: Session, job_id: str, limit: int = 5) -> list[dict]:
@@ -922,21 +1312,71 @@ def find_similar_jobs(db: Session, job_id: str, limit: int = 5) -> list[dict]:
     if not reference or reference.embedding is None:
         return []
 
-    distance = Job.embedding.cosine_distance(reference.embedding)
+    ref_embedding = reference.embedding
+
+    # Use pgvector cosine distance for similarity scoring
+    try:
+        distance_expr = Job.embedding.op("<=>", return_type=Float)(ref_embedding)
+        stmt = (
+            select(
+                Job.id, Job.title, Job.title_clean, Job.company,
+                Job.location_city, Job.remote, Job.category, Job.url,
+                distance_expr.label("distance"),
+            )
+            .where(Job.embedding.isnot(None), Job.is_active.is_(True))
+            .where(Job.id != job_id)
+            .order_by(distance_expr.asc())
+            .limit(limit)
+        )
+        rows = db.execute(stmt).all()
+        return [
+            {
+                "id": str(row.id),
+                "title": row.title_clean or row.title,
+                "company": row.company,
+                "location_city": row.location_city,
+                "remote": row.remote,
+                "category": row.category,
+                "url": row.url,
+                "similarity": round(1.0 - row.distance, 4),
+            }
+            for row in rows
+        ]
+    except Exception:
+        pass
+
+    # Fallback: Python cosine similarity
+    import numpy as np
+    ref_vec = np.array(ref_embedding, dtype=np.float32)
+    ref_norm = np.linalg.norm(ref_vec)
+    if ref_norm == 0:
+        return []
 
     stmt = (
         select(
             Job.id, Job.title, Job.title_clean, Job.company,
             Job.location_city, Job.remote, Job.category, Job.url,
-            (1 - distance).label("similarity"),
+            Job.embedding,
         )
         .where(Job.embedding.isnot(None), Job.is_active.is_(True))
         .where(Job.id != job_id)
-        .order_by(distance)
-        .limit(limit)
     )
 
-    results = db.execute(stmt).all()
+    rows = db.execute(stmt).all()
+
+    scored = []
+    for row in rows:
+        emb = row.embedding
+        if emb is None:
+            continue
+        emb_vec = np.array(emb, dtype=np.float32)
+        emb_norm = np.linalg.norm(emb_vec)
+        if emb_norm == 0:
+            continue
+        sim = float(np.dot(ref_vec, emb_vec) / (ref_norm * emb_norm))
+        scored.append((row, sim))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
 
     return [
         {
@@ -947,9 +1387,9 @@ def find_similar_jobs(db: Session, job_id: str, limit: int = 5) -> list[dict]:
             "remote": row.remote,
             "category": row.category,
             "url": row.url,
-            "similarity": round(float(row.similarity), 4),
+            "similarity": round(sim, 4),
         }
-        for row in results
+        for row, sim in scored[:limit]
     ]
 
 

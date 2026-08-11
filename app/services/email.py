@@ -1,11 +1,5 @@
-"""Email Service.
-
-Sends notification digests using SMTP. Configured for Gmail's free tier
-by default, but works with any SMTP provider.
-
-If SMTP isn't configured (no credentials in .env), fails gracefully and
-logs to console instead — the rest of the system keeps working.
-"""
+"""Sends notification emails over SMTP (Gmail by default, but any provider works).
+If credentials aren't set in .env, we just log it and move on instead of crashing."""
 
 import logging
 import smtplib
@@ -43,17 +37,17 @@ def send_password_reset_email(to_email: str, reset_url: str) -> bool:
     settings = get_settings()
     safe_url = escape(reset_url, quote=True)
     message = MIMEMultipart("alternative")
-    message["Subject"] = "Reset your JobMatch AI password"
+    message["Subject"] = "Reset your JobMatch password"
     message["From"] = settings.email_from or settings.smtp_user
     message["To"] = to_email
     message.attach(MIMEText(
-        "A password reset was requested for your JobMatch AI account. "
+        "A password reset was requested for your JobMatch account. "
         f"Open this link to reset it: {reset_url}\n\n"
         "If you did not request this, you can ignore this email.",
         "plain",
     ))
     message.attach(MIMEText(
-        "<p>A password reset was requested for your JobMatch AI account.</p>"
+        "<p>A password reset was requested for your JobMatch account.</p>"
         f'<p><a href="{safe_url}">Reset your password</a></p>'
         "<p>If you did not request this, you can ignore this email.</p>",
         "html",
@@ -77,7 +71,7 @@ def send_notification_digest(
     msg["From"] = settings.email_from or settings.smtp_user
     msg["To"] = to_email
     msg.attach(MIMEText(
-        "JobMatch AI found updates for you:\n\n" + "\n".join(
+        "JobMatch found updates for you:\n\n" + "\n".join(
             f"{job.get('title', 'Job')} at {job.get('company') or 'Unknown company'} "
             f"({job.get('match_percentage', 0)}% match) {job.get('url') or ''}"
             for job in jobs
@@ -130,7 +124,7 @@ def _build_digest_html(user_name: str | None, jobs: list[dict]) -> str:
             {job_rows}
         </table>
         <p style="color: #999; font-size: 12px; margin-top: 20px;">
-            You're receiving this because you enabled job match notifications on JobMatch AI.
+            You're receiving this because you enabled job match notifications on JobMatch.
         </p>
     </body>
     </html>

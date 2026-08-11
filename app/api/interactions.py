@@ -1,9 +1,9 @@
-"""Interaction Tracking API — log user actions on job listings.
+﻿"""Interaction Tracking API - log user actions on job listings.
 
 Endpoints:
-    POST /me/interactions          — log an interaction event
-    GET  /me/interactions          — get interaction history
-    GET  /me/interactions/summary  — aggregated interaction stats
+    POST /me/interactions          - log an interaction event
+    GET  /me/interactions          - get interaction history
+    GET  /me/interactions/summary  - aggregated interaction stats
 """
 
 import uuid
@@ -59,11 +59,7 @@ def log_interaction(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Log a user interaction event with a job listing.
-
-    Supports: impression, view, save, unsave, dismiss, apply_clicked,
-    marked_relevant, marked_irrelevant, notification_opened.
-    """
+    """Log a user interaction with a job listing (see VALID_INTERACTION_TYPES)."""
     if req.interaction_type not in VALID_INTERACTION_TYPES:
         raise HTTPException(
             status_code=400,

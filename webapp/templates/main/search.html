@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% block title %}Search Jobs — JobMatch AI{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}Search Jobs - JobMatch{% endblock %}
 
 {% block content %}
 <div class="max-w-[1128px] mx-auto px-4 py-6">
@@ -13,6 +13,8 @@
                 <button type="submit" class="li-btn-primary py-2 px-6">Search</button>
             </div>
             <div class="flex flex-wrap gap-3">
+                <input type="text" name="company" value="{{ company_filter }}" placeholder="Company" class="li-input max-w-[200px] h-[36px]">
+                <input type="text" name="skills" value="{{ skills_filter }}" placeholder="Skills (comma-separated)" class="li-input max-w-[220px] h-[36px]">
                 <input type="text" name="country" value="{{ country }}" placeholder="Country" class="li-input max-w-[200px] h-[36px]">
                 <select name="category" class="li-input max-w-[200px] h-[36px]">
                     <option value="">Any category</option>
@@ -33,9 +35,15 @@
         </form>
     </div>
 
-    {% if query %}
+    {% if query or company_filter or skills_filter %}
     {% if profile_message %}<div class="li-card p-4 mb-3 text-sm">{{ profile_message }} <a class="text-brand-600" href="{{ url_for('profile.view_profile') }}">Edit your profile</a>.</div>{% endif %}
-    <div class="text-sm text-[#00000099] mb-3">{{ results|length }} result{{ 's' if results|length != 1 }} for "<strong class="text-[#000000e6]">{{ query }}</strong>"</div>
+    <div class="text-sm text-[#00000099] mb-3">
+        {{ results|length }} result{{ 's' if results|length != 1 }}
+        {% if query %} for "<strong class="text-[#000000e6]">{{ query }}</strong>"
+        {% elif company_filter %} for company "<strong class="text-[#000000e6]">{{ company_filter }}</strong>"
+        {% elif skills_filter %} for skills "<strong class="text-[#000000e6]">{{ skills_filter }}</strong>"
+        {% endif %}
+    </div>
 
     {# Count evidence-backed vs semantic fallback results #}
     {% set evidence_count = results|selectattr('match_type', 'ne', 'semantic_fallback')|list|length %}

@@ -1,15 +1,6 @@
-"""Embedding Service — generates vector embeddings using sentence-transformers.
-
-Model: BAAI/bge-base-en-v1.5 (768 dimensions)
-Upgraded from all-MiniLM-L6-v2 (384 dim) for significantly better
-retrieval accuracy on job matching tasks.
-
-Key improvements over the baseline:
-    1. BGE model — built for retrieval, not just similarity
-    2. Query prefix — BGE expects "Represent this sentence: " for queries
-    3. Boilerplate stripping — removes legal/benefits noise from descriptions
-    4. Title weighting — repeats the title so it dominates the embedding
-"""
+﻿"""Generates embeddings for jobs, profiles and search queries via sentence-transformers
+(BAAI/bge-base-en-v1.5, 768 dims). Switched from all-MiniLM-L6-v2 - retrieval was noticeably
+better on job matching."""
 
 import re
 import logging
@@ -54,15 +45,11 @@ COMPILED_BOILERPLATE = [re.compile(p, re.MULTILINE | re.DOTALL) for p in BOILERP
 
 
 def _strip_boilerplate(text: str) -> str:
-    """Remove common noise sections from job descriptions.
-
-    These sections dilute the embedding — they contain no signal about
-    what the job actually requires.
-    """
+    """Strip the legal/benefits/apply-now noise that dilutes the embedding signal."""
     for pattern in COMPILED_BOILERPLATE:
         text = pattern.sub("", text)
 
-    # Also strip the last 25% of very long descriptions — usually
+    # Also strip the last 25% of very long descriptions - usually
     # benefits, disclaimers, and application instructions live at the end
     lines = text.strip().split("\n")
     if len(lines) > 20:
@@ -77,22 +64,11 @@ def _strip_boilerplate(text: str) -> str:
 
 
 def generate_embedding(text: str, is_query: bool = False) -> list[float]:
-    """Generate a single embedding vector from text.
-
-    Args:
-        text: Any text — job description, user profile summary, search query.
-        is_query: If True, adds the BGE query prefix for better retrieval.
-                  Set True for: search queries, user profiles.
-                  Set False for: job descriptions (they are the "documents").
-
-    Returns:
-        List of floats (768 dimensions with BGE).
-    """
+    """Embed a piece of text. Pass is_query=True for search queries/profiles (BGE wants a
+    prefix on those), leave False for job descriptions - they're the "documents" being searched."""
     if not text or not text.strip():
         return [0.0] * get_settings().embedding_dim
 
-    # BGE models are trained with a specific prefix for queries
-    # This significantly improves retrieval accuracy
     if is_query:
         text = "Represent this sentence: " + text
 
@@ -106,16 +82,7 @@ def generate_embeddings_batch(
     batch_size: int = 32,
     is_query: bool = False,
 ) -> list[list[float]]:
-    """Generate embeddings for multiple texts efficiently.
-
-    Args:
-        texts: List of texts to embed.
-        batch_size: Batch size for encoding.
-        is_query: If True, adds BGE query prefix to all texts.
-
-    Returns:
-        List of embedding vectors.
-    """
+    """Same as generate_embedding but batched for speed."""
     model = _get_model()
 
     clean_texts = []
@@ -136,30 +103,22 @@ def generate_embeddings_batch(
 
 
 def build_job_text(title: str, description: str, skills: list[str] | None = None) -> str:
-    """Combine job fields into a single string for embedding.
-
-    Key improvements over the baseline:
-        1. Title repeated — ensures it dominates the embedding signal
-        2. Skills listed explicitly — structured, unambiguous signal
-        3. Description stripped of boilerplate — less noise
-        4. Truncated to 1500 chars — longer text dilutes, shorter stays focused
-    """
+    """Combine job fields into one string for embedding."""
     parts = []
 
-    # Repeat the title for emphasis — this is the strongest signal
+    # title twice so it dominates the embedding signal
     clean_title = title.strip() if title else ""
     if clean_title:
         parts.append(clean_title)
-        parts.append(clean_title)  # Deliberate repetition
+        parts.append(clean_title)
 
-    # Skills as a clean, explicit list
     if skills:
         parts.append("Required skills: " + ", ".join(skills))
 
-    # Description with boilerplate removed
     if description:
         cleaned = _strip_boilerplate(description)
-        # Take only the first 1500 chars — the important stuff is at the top
+        # first 1500 chars only - the important stuff is usually at the top,
+        # and long text just dilutes the embedding
         parts.append(cleaned[:1500])
 
     return " | ".join(parts)
@@ -171,17 +130,10 @@ def build_profile_text(
     career_interests: str | None,
     experience_level: str | None,
 ) -> str:
-    """Combine user profile fields into a single string for embedding.
-
-    This turns the user into a 'query document' that can be compared
-    against job embeddings via cosine similarity.
-
-    Note: profile embeddings use is_query=True when calling generate_embedding,
-    since the user profile acts as the "query" searching for matching "document" jobs.
-    """
+    """Combine profile fields into one string, embedded with is_query=True since the
+    profile is effectively the search query looking for matching jobs."""
     parts = []
 
-    # Headline is the strongest signal — repeat it
     if headline:
         parts.append(headline)
         parts.append(headline)

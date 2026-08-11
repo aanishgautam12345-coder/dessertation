@@ -1,9 +1,12 @@
-"""Auth Routes — session-based login/register/logout using Flask-Login."""
+﻿"""Auth Routes - session-based login/register/logout using Flask-Login."""
 
 import uuid
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, login_required, current_user
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.utils import redirect as werkzeug_redirect
 
 from app.database import SessionLocal
 from app.models.user import User, UserProfile, NotificationPreference
@@ -18,9 +21,18 @@ from app.services.password_reset import (
 )
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
+limiter = Limiter(key_func=get_remote_address)
+
+
+def _safe_redirect(target):
+    """Redirect only to safe, internal paths (no external URLs)."""
+    if target and target.startswith("/") and not target.startswith("//"):
+        return redirect(target)
+    return redirect(url_for("main.index"))
 
 
 @auth_bp.route("/register", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
 def register():
     if current_user.is_authenticated:
         return redirect(url_for("main.index"))
@@ -70,7 +82,7 @@ def register():
             db.refresh(user)
 
             login_user(user)
-            flash("Welcome to JobMatch AI! Let's build your profile.", "success")
+            flash("Welcome to JobMatch! Let's build your profile.", "success")
             return redirect(url_for("profile.view_profile"))
 
         finally:
@@ -80,6 +92,7 @@ def register():
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("main.index"))
@@ -105,7 +118,7 @@ def login():
             flash(f"Welcome back!", "success")
 
             next_page = request.args.get("next")
-            return redirect(next_page or url_for("main.index"))
+            return _safe_redirect(next_page)
 
         finally:
             db.close()
@@ -148,7 +161,7 @@ def reset_password(token):
     return render_template("auth/reset_password.html", token=token)
 
 
-@auth_bp.route("/logout")
+@auth_bp.route("/logout", methods=["POST"])
 @login_required
 def logout():
     logout_user()

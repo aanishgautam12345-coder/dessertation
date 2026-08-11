@@ -1,4 +1,4 @@
-"""Jobs Routes — search, recommendations, saved jobs, recent jobs."""
+﻿"""Jobs Routes - search, recommendations, saved jobs, recent jobs."""
 
 import uuid
 
@@ -11,6 +11,7 @@ from app.models.user import UserProfile
 from app.models.recommendation import SavedJob
 from app.models.user import UserProfile
 from app.services.search import evidence_search, semantic_search, keyword_search, hybrid_search, personalized_search, format_salary_display
+from app.api.jobs_extended import search_by_company, search_by_skills
 from app.agents.recommendation_agent import RecommendationAgent
 from app.services.recommendation import compute_match_score
 from app.services.rag import generate_explanation
@@ -28,15 +29,27 @@ def search():
     remote_only = request.args.get("remote_only") == "on"
     recommended = request.args.get("recommended") == "on"
     min_salary = request.args.get("min_salary", type=float)
+    company_filter = request.args.get("company", "").strip()
+    skills_filter = request.args.get("skills", "").strip()
     page = max(request.args.get("page", 1, type=int), 1)
     page_size = 20
     profile_message = None
 
     results = []
-    if query:
+    if query or company_filter or skills_filter:
         db = SessionLocal()
         try:
-            if recommended:
+            if not query and (company_filter or skills_filter):
+                # No keyword query - search standalone by the Company/Skills
+                # fields directly, since the general keyword box never
+                # searches Job.company and only opportunistically catches
+                # skills for short technical queries.
+                if company_filter:
+                    results = search_by_company(q=company_filter, limit=page * page_size, db=db)["results"]
+                elif skills_filter:
+                    results = search_by_skills(skills=skills_filter, match_all=False, limit=page * page_size, db=db)["results"]
+                results = results[(page - 1) * page_size:]
+            elif recommended:
                 profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
                 if not profile or profile.profile_embedding is None or (not profile.skills and not profile.headline):
                     profile_message = "Complete your profile before using Recommended for me."
@@ -60,6 +73,21 @@ def search():
                 results = evidence_search(db, query=query, limit=page * page_size)
                 results = results[(page - 1) * page_size:]
 
+            # Apply company filter (client-side on current results)
+            if company_filter:
+                results = [r for r in results if company_filter.lower() in (r.get("company") or "").lower()]
+
+            # Apply skills filter (client-side on current results)
+            if skills_filter:
+                skill_terms = [s.strip().lower() for s in skills_filter.split(",") if s.strip()]
+                if skill_terms:
+                    filtered = []
+                    for r in results:
+                        job_skills = [s.skill.lower() for s in db.query(JobSkill).filter(JobSkill.job_id == r["id"]).all()]
+                        if any(any(term in js for js in job_skills) for term in skill_terms):
+                            filtered.append(r)
+                    results = filtered
+
             saved_ids = {
                 str(s.job_id) for s in
                 db.query(SavedJob).filter(SavedJob.user_id == current_user.id).all()
@@ -79,6 +107,7 @@ def search():
         country=country, remote_only=remote_only,
         recommended=recommended, min_salary=min_salary, page=page,
         profile_message=profile_message,
+        company_filter=company_filter, skills_filter=skills_filter,
     )
 
 
@@ -102,9 +131,45 @@ def recommendations():
         for r in recs:
             r["is_saved"] = r["job_id"] in saved_ids
 
-        return render_template("main/recommendations.html", recs=recs, no_profile=False)
+        overview = _build_recommendation_overview(recs)
+
+        return render_template(
+            "main/recommendations.html", recs=recs, no_profile=False, overview=overview,
+        )
     finally:
         db.close()
+
+
+def _build_recommendation_overview(recs: list[dict]) -> dict:
+    """Aggregate match-score stats and skill-gap insights across a user's recommendation set."""
+    from collections import Counter
+
+    scores = [r["match_percentage"] for r in recs]
+    bands = {"90-100%": 0, "75-89%": 0, "60-74%": 0, "40-59%": 0, "Below 40%": 0}
+    for s in scores:
+        if s >= 90:
+            bands["90-100%"] += 1
+        elif s >= 75:
+            bands["75-89%"] += 1
+        elif s >= 60:
+            bands["60-74%"] += 1
+        elif s >= 40:
+            bands["40-59%"] += 1
+        else:
+            bands["Below 40%"] += 1
+
+    missing_counts = Counter()
+    for r in recs:
+        missing_counts.update(r.get("missing_skills") or [])
+
+    return {
+        "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
+        "highest": max(scores) if scores else 0.0,
+        "lowest": min(scores) if scores else 0.0,
+        "bands": bands,
+        "max_band_count": max(bands.values()) if bands else 1,
+        "top_missing_skills": missing_counts.most_common(8),
+    }
 
 
 @jobs_bp.route("/<job_id>")
@@ -136,7 +201,8 @@ def job_detail(job_id):
                 ORDER BY embedding <=> :embedding
                 LIMIT 5
             """)
-            rows = db.execute(stmt, {"embedding": str(job.embedding), "job_id": job.id}).fetchall()
+            embedding_literal = "[" + ",".join(map(str, job.embedding)) + "]"
+            rows = db.execute(stmt, {"embedding": embedding_literal, "job_id": job.id}).fetchall()
             similar_jobs = rows
 
         breakdown = None
@@ -168,7 +234,7 @@ def job_detail(job_id):
 @jobs_bp.route("/explain/<job_id>")
 @login_required
 def explain(job_id):
-    """AJAX endpoint — generates a RAG explanation for a single job on demand."""
+    """AJAX endpoint - generates an explanation for a single job on demand."""
     db = SessionLocal()
     try:
         profile = current_user.profile
@@ -187,9 +253,20 @@ def explain(job_id):
             similarity = 0.0
 
         breakdown = compute_match_score(profile, job, job_skills, similarity, getattr(profile, 'preferred_job_types', None))
-        explanation = generate_explanation(profile, job, breakdown)
+        result = generate_explanation(profile, job, breakdown)
 
-        return jsonify({"explanation": explanation})
+        response = {
+            "explanation": result.to_text(),
+            "headline": result.headline or None,
+            "strengths": result.strengths or None,
+            "gaps": result.gaps or None,
+            "recommendation": result.recommendation or None,
+            "confidence": result.confidence if result.confidence else None,
+            "match_tier": result.match_tier,
+        }
+        if result.error:
+            response["error"] = result.error
+        return jsonify(response)
     finally:
         db.close()
 

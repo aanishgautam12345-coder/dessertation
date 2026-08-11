@@ -1,10 +1,6 @@
-"""Category Normalisation Processor.
+﻿"""Maps raw job categories onto a fixed ~20-category taxonomy so filtering stays consistent."""
 
-Maps raw job categories to a fixed taxonomy of ~20 categories.
-This gives consistent filtering and makes evaluation cleaner.
-"""
-
-# The canonical taxonomy — every job maps to one of these
+# The canonical taxonomy - every job maps to one of these
 CATEGORIES = [
     "Software Engineering",
     "Data Science & Analytics",
@@ -123,16 +119,9 @@ CATEGORY_RULES: list[tuple[list[str], str]] = [
 
 
 def normalise_category(raw_category: str | None, title: str | None = None) -> str:
-    """Map a raw category and/or title to a canonical category.
-
-    Args:
-        raw_category: The category from the source (may be None or messy).
-        title: The job title (used as fallback signal).
-
-    Returns:
-        One of the canonical category strings.
-    """
-    # Combine signals
+    """Map a raw category (often messy or missing) to one of CATEGORIES, falling
+    back to keyword matching on the title if needed."""
+    # combine signals
     text = f"{raw_category or ''} {title or ''}".lower()
 
     if not text.strip():

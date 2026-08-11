@@ -1,10 +1,3 @@
-"""We Work Remotely RSS Scraper.
-
-Parses the public RSS feed — no API key needed.
-Feed URL: https://weworkremotely.com/remote-jobs.rss
-
-This satisfies the "one scraper sample from a job platform" requirement.
-"""
 
 import hashlib
 import logging

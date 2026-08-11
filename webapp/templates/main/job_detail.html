@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% block title %}{{ job.title_clean or job.title }} — JobMatch AI{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}{{ job.title_clean or job.title }} - JobMatch{% endblock %}
 
 {% macro logo(name, cls="company-logo") -%}
 {%- set colors = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#34495e','#16a085','#c0392b','#2980b9','#8e44ad'] -%}
@@ -122,7 +122,7 @@
 
             <!-- Explanation -->
             <div class="li-card p-6 mt-4">
-                <h2 class="text-base font-semibold text-[#000000e6] mb-3">AI explanation</h2>
+                <h2 class="text-base font-semibold text-[#000000e6] mb-3">Match explanation</h2>
                 <button onclick="explainJob('{{ job.id }}', this)" class="li-btn-outline text-sm py-2 px-5">Generate explanation</button>
                 <div class="explanation-box hidden mt-3 p-4 bg-[#f3f2ef] rounded-lg text-sm text-[#00000099] leading-relaxed"></div>
             </div>

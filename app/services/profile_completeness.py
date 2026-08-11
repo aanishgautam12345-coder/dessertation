@@ -1,13 +1,5 @@
-"""Profile Completeness Service.
-
-Calculates how complete a user profile is, providing:
-- A 0-100 completeness score
-- Per-field completeness breakdown
-- Actionable guidance for the user to improve their profile
-
-This directly addresses audit finding #20: users with empty profiles
-get no recommendations but no guidance on how to improve.
-"""
+"""Scores how complete a profile is (0-100) and tells the user what to fill in next -
+otherwise an empty profile just gets no recommendations with no explanation why."""
 
 from dataclasses import dataclass, field
 from app.models.user import UserProfile

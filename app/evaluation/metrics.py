@@ -1,12 +1,8 @@
-"""Information Retrieval Evaluation Metrics.
+﻿"""Standard IR metrics (precision, MRR, nDCG etc.) for comparing ranked search
+results against human relevance judgments.
 
-Standard metrics for comparing ranked search results against human
-relevance judgments. Used to compare Semantic Search vs Keyword Search
-(and later, the Recommendation Agent) — this IS your dissertation's
-evaluation methodology in code.
-
-All functions take a `relevance` list: a list of integers in RANK ORDER
-(relevance[0] = judgment for the #1 result).
+All functions take a `relevance` list: integers in rank order, so relevance[0]
+is the judgment for the #1 result.
 
 Graded relevance scale:
     0 = Not relevant
@@ -33,7 +29,7 @@ def precision_at_k(relevance: list[int], k: int) -> float:
 
 
 def graded_precision_at_k(relevance: list[int], k: int) -> float:
-    """Graded Precision@k — average relevance score in top k, normalised to [0,1].
+    """Graded Precision@k - average relevance score in top k, normalised to [0,1].
 
     Uses the full 0-3 scale.
     """
@@ -52,7 +48,7 @@ def recall_at_k(relevance: list[int], k: int, total_relevant: int) -> float:
 
 
 def mean_reciprocal_rank(relevance: list[int]) -> float:
-    """Mean Reciprocal Rank (MRR) — 1/rank of the first relevant result.
+    """Mean Reciprocal Rank (MRR) - 1/rank of the first relevant result.
 
     Returns 0 if no relevant result exists in the list.
     Scale: (0, 1] where 1 means the first result is relevant.
@@ -64,7 +60,7 @@ def mean_reciprocal_rank(relevance: list[int]) -> float:
 
 
 def average_precision(relevance: list[int]) -> float:
-    """Average Precision — precision computed at each relevant hit,
+    """Average Precision - precision computed at each relevant hit,
     then averaged. Rewards putting relevant results EARLY in the ranking.
 
     Binary: counts any relevance > 0 as relevant.
@@ -79,7 +75,7 @@ def average_precision(relevance: list[int]) -> float:
 
 
 def dcg_at_k(relevance: list[int], k: int) -> float:
-    """Discounted Cumulative Gain@k — relevant results near the top
+    """Discounted Cumulative Gain@k - relevant results near the top
     count more than relevant results further down.
 
     Uses graded relevance (0-3).
@@ -91,7 +87,7 @@ def dcg_at_k(relevance: list[int], k: int) -> float:
 
 
 def ndcg_at_k(relevance: list[int], k: int) -> float:
-    """Normalised DCG@k — DCG divided by the best-possible DCG (all
+    """Normalised DCG@k - DCG divided by the best-possible DCG (all
     relevant items ranked first). Scales to [0, 1].
 
     Uses graded relevance (0-3).

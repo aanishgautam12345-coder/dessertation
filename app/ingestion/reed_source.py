@@ -1,4 +1,4 @@
-﻿"""Reed.co.uk API Ingestion Source.
+"""Reed.co.uk API Ingestion Source.
 
 Fetches jobs from the Reed.co.uk job search API.
 Free tier: requires registration at api.reed.co.uk.

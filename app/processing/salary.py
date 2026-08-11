@@ -1,4 +1,4 @@
-"""Salary Standardisation Processor.
+﻿"""Salary Standardisation Processor.
 
 Parses salary information from various formats into a consistent structure.
 Never fabricates a salary when missing. Stores original text and confidence.
@@ -73,14 +73,14 @@ COMPETITIVE_KEYWORDS = ["competitive", "market rate", "market aligned"]
 SALARY_PATTERN = re.compile(
     r"(?P<currency>[£$€₹]|(?:USD|GBP|EUR|INR|AUD|CAD|CHF|SGD|ZAR|MYR|PLN))\s*"
     r"(?P<min>[\d,]+(?:\.\d+)?)\s*(?P<min_mult>[kKmM])?"
-    r"(?:\s*[-–—to]+\s*[£$€₹]?\s*(?P<max>[\d,]+(?:\.\d+)?)\s*(?P<max_mult>[kKmM])?)?",
+    r"(?:\s*[-to]+\s*[£$€₹]?\s*(?P<max>[\d,]+(?:\.\d+)?)\s*(?P<max_mult>[kKmM])?)?",
     re.IGNORECASE,
 )
 
 BARE_SALARY_PATTERN = re.compile(
     r"(?:salary|pay|compensation|wage|rate)[:\s]*"
     r"(?P<min>[\d,]+(?:\.\d+)?)\s*(?P<min_mult>[kKmM])?"
-    r"(?:\s*[-–—to]+\s*(?P<max>[\d,]+(?:\.\d+)?)\s*(?P<max_mult>[kKmM])?)?",
+    r"(?:\s*[-to]+\s*(?P<max>[\d,]+(?:\.\d+)?)\s*(?P<max_mult>[kKmM])?)?",
     re.IGNORECASE,
 )
 
@@ -166,18 +166,9 @@ def parse_salary(
     source_max: float | None = None,
     source_currency: str | None = None,
 ) -> ParsedSalary:
-    """Parse salary from text or structured fields.
-
-    Args:
-        text: Free text that might contain salary info (description).
-        source_min: Pre-structured min salary (e.g. from Adzuna API).
-        source_max: Pre-structured max salary (e.g. from Adzuna API).
-        source_currency: Currency code from source.
-
-    Returns:
-        ParsedSalary with standardised fields.
-    """
-    result = ParsedSalary(original_text=text)
+    """Parse salary from free text, or use source_min/max directly if the API already
+    gave us structured values (e.g. Adzuna)."""
+    result = ParsedSalary(original_text=text[:255] if text else None)
 
     # Check for OTE/DOE/Competitive
     text_lower = (text or "").lower()

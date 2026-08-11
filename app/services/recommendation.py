@@ -1,8 +1,5 @@
-"""Recommendation Scoring Service.
-
-Implements the explicit match-score formula used by the Recommendation Agent.
-Every sub-score is computed transparently so the RAG Explanation Engine can
-reference exactly WHY a job scored the way it did.
+﻿"""The match-score formula, kept as separate sub-scores so the explanation engine can point
+to exactly why a job scored the way it did:
 
     match = w_semantic * semantic_similarity
           + w_skills * skill_overlap
@@ -11,8 +8,7 @@ reference exactly WHY a job scored the way it did.
           + w_experience * experience_fit
           + w_job_type * job_type_fit
 
-Weights are loaded from scoring_config.py and can be versioned for ablation studies.
-"""
+Weights come from scoring_config.py (versioned, for ablation studies)."""
 
 from dataclasses import dataclass, field
 
@@ -41,7 +37,7 @@ CURRENCY_RATES = {
 
 @dataclass
 class MatchBreakdown:
-    """Transparent scoring breakdown — this feeds directly into the RAG explainer."""
+    """Transparent scoring breakdown - this feeds directly into the explanation engine."""
     semantic_similarity: float = 0.0
     skill_overlap: float = 0.0
     location_fit: float = 0.0
@@ -70,21 +66,10 @@ def compute_match_score(
     weight_version: str | None = None,
     hard_constraints: dict | None = None,
 ) -> MatchBreakdown:
-    """Compute the full match score between a user profile and a job.
+    """Compute the full match score for a profile/job pair.
 
-    Args:
-        profile: The user's profile.
-        job: The candidate job.
-        job_skills: List of skill strings extracted for this job.
-        semantic_similarity: Pre-computed cosine similarity (0-1).
-        preferred_job_types: User's preferred job types.
-        weight_version: Scoring weight version (None = default).
-        hard_constraints: Optional dict of hard constraints that MUST pass.
-            Keys: "locations" (list[str]), "remote_only" (bool),
-            "min_salary" (float), "job_types" (list[str]).
-
-    Returns:
-        MatchBreakdown with every sub-score and the final weighted total.
+    hard_constraints, if given, must ALL pass or the job scores 0 - expected keys:
+    "locations" (list[str]), "remote_only" (bool), "min_salary" (float), "job_types" (list[str]).
     """
     weights = load_weights(weight_version)
     breakdown = MatchBreakdown(

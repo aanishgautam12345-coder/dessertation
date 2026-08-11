@@ -1,7 +1,7 @@
 """Focused tests for scheduler, delivery truthfulness, and personalized search."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -148,7 +148,7 @@ def test_recent_pending_delivery_prevents_concurrent_duplicate():
     user, profile, prefs, job = _delivery_parts()
     db.notifications.append(Notification(
         id=uuid.uuid4(), user_id=user.id, job_id=job.id, type="new_job",
-        match_score=0.9, status="pending", attempted_at=datetime.utcnow(),
+        match_score=0.9, status="pending", attempted_at=datetime.now(timezone.utc),
         retry_count=1, dedupe_key=f"{user.id}:{job.id}:new_job",
     ))
     with patch("app.agents.notification_agent.send_notification_digest") as sender:

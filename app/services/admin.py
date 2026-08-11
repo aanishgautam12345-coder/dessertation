@@ -1,7 +1,7 @@
 """Administrative job, monitoring, and normalization operations."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -150,8 +150,8 @@ def update_job(db: Session, job: Job, values: dict) -> Job:
         job.embedding = generate_embedding(
             build_job_text(job.title_clean or job.title, job.description or "", skills)
         )
-        job.embedded_at = datetime.utcnow()
-    job.updated_at = datetime.utcnow()
+        job.embedded_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(timezone.utc)
     db.commit()
     return job
 

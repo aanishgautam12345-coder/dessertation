@@ -1,4 +1,4 @@
-"""CSV Ingestion Source — imports the Job Skill Set Kaggle dataset.
+﻿"""CSV Ingestion Source - imports the Job Skill Set Kaggle dataset.
 
 Expected CSV columns (from batuhanmutlu/job-skill-set):
     job_title, category, job_description, skills

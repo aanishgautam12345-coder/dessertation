@@ -1,9 +1,5 @@
-"""Job Quality Scoring Service.
-
-Scores each processed job on completeness, freshness, description quality,
-salary transparency, and metadata richness. Produces a 0-100 quality score
-with breakdown for transparency and debugging.
-"""
+"""Scores a job 0-100 on completeness, freshness, description quality, salary
+transparency and metadata richness, with a per-dimension breakdown for debugging."""
 
 import math
 from dataclasses import dataclass, field

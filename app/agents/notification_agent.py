@@ -1,8 +1,8 @@
-"""Frequency-aware, idempotent email notification agent."""
+"""Frequency-aware, idempotent email notification system."""
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 from sqlalchemy import select
@@ -32,7 +32,7 @@ class NotificationAgent:
         if frequency is not None and frequency not in {"instant", "daily", "weekly"}:
             raise ValueError("Unsupported notification frequency")
         default_hours = 24 * 7 if frequency == "weekly" else DEFAULT_LOOKBACK_HOURS
-        since = since or datetime.utcnow() - timedelta(hours=default_hours)
+        since = since or datetime.now(timezone.utc) - timedelta(hours=default_hours)
         new_jobs = self._get_new_jobs(since)
         users = self._get_active_users(frequency)
         emails_sent = 0
@@ -101,7 +101,7 @@ class NotificationAgent:
             candidates.append(recommendation)
 
         candidates.sort(key=lambda item: item[1], reverse=True)
-        prefs.last_processed_at = datetime.utcnow()
+        prefs.last_processed_at = datetime.now(timezone.utc)
         if not candidates:
             self.db.commit()
             return {"attempted": False, "delivered": False, "notifications_sent": 0}
@@ -176,7 +176,7 @@ class NotificationAgent:
             if (
                 notification and notification.status == "pending"
                 and notification.attempted_at
-                and notification.attempted_at >= datetime.utcnow() - timedelta(minutes=30)
+                and notification.attempted_at >= datetime.now(timezone.utc) - timedelta(minutes=30)
             ):
                 continue
             if not notification:
@@ -187,7 +187,7 @@ class NotificationAgent:
                 )
             notification.digest_id = digest_id
             notification.status = "pending"
-            notification.attempted_at = datetime.utcnow()
+            notification.attempted_at = datetime.now(timezone.utc)
             notification.retry_count = (notification.retry_count or 0) + 1
             self.db.add(notification)
             reserved.append((notification, job, score, base_type))
@@ -203,7 +203,7 @@ class NotificationAgent:
             "notification_type": notification_type,
         } for _, job, score, notification_type in reserved]
         delivered = send_notification_digest(user.email, profile.full_name, summaries)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         for notification, _, _, _ in reserved:
             notification.status = "sent" if delivered else "failed"
             notification.sent_at = now if delivered else None

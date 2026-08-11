@@ -1,14 +1,6 @@
-"""Duplicate Detection Processor.
-
-Two-stage deduplication with audit trail:
-1. Exact: SHA-256 hash of normalised (title + company + location)
-2. Near-duplicate: multi-signal fuzzy matching (title, company, location, salary, description)
-
-Stage 1 runs at insert time (dedup_hash unique constraint).
-Stage 2 can run as a batch cleanup.
-
-Each dedup decision produces an audit record for traceability.
-"""
+"""Two ways to catch duplicate postings: an exact SHA-256 hash of title+company+location
+(enforced at insert time via a unique constraint), and fuzzy matching across title,
+company, location, salary and description for near-duplicates."""
 
 import hashlib
 from dataclasses import dataclass, field
@@ -68,21 +60,9 @@ def is_near_duplicate(
     threshold: float = 0.85,
     audit: bool = False,
 ) -> bool | tuple[bool, DedupAuditRecord]:
-    """Check if two jobs are near-duplicates using multi-signal fuzzy matching.
-
-    Args:
-        title_a, title_b: Job titles.
-        company_a, company_b: Company names.
-        location_a, location_b: Location strings.
-        salary_min_a, salary_max_a: Salary range for job A.
-        salary_min_b, salary_max_b: Salary range for job B.
-        description_a, description_b: Full descriptions.
-        threshold: Combined score threshold (0.0-1.0) to consider duplicate.
-        audit: If True, return audit record alongside result.
-
-    Returns:
-        bool if audit=False, (bool, DedupAuditRecord) if audit=True.
-    """
+    """Check if two jobs are near-duplicates via fuzzy matching across title, company,
+    location, salary and description. Returns just a bool, or (bool, DedupAuditRecord)
+    if audit=True."""
     record = DedupAuditRecord()
 
     # Title similarity (token set ratio handles word order differences)
