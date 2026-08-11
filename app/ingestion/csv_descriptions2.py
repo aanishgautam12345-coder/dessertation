@@ -1,6 +1,6 @@
 ﻿"""CSV Ingestion Source - imports the job_descriptions2.csv dataset.
 
-Expected CSV columns:
+ CSV columns:
     Job Id, Experience, Qualifications, Salary Range, location, Country,
     latitude, longitude, Work Type, Company Size, Job Posting Date,
     Preference, Contact Person, Contact, Job Title, Role, Job Portal,
