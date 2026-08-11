@@ -203,7 +203,11 @@ def create_job(
         raise HTTPException(status_code=409, detail="A job with identical title, company, location, and salary already exists")
 
     # Generate embedding
-    text_for_embedding = build_job_text(title_clean, request.description or "", request.skills or None)
+    text_for_embedding = build_job_text(
+        title_clean, request.description or "", request.skills or None,
+        location_city=request.location_city, location_country=request.location_country,
+        remote=request.remote,
+    )
     embedding = generate_embedding(text_for_embedding)
 
     # Score quality

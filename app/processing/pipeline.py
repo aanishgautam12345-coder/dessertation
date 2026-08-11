@@ -298,7 +298,11 @@ def _process_single(raw: RawJob, generate_emb: bool, db: Session | None = None) 
 
     embedding = None
     if generate_emb:
-        text_for_embedding = build_job_text(title_clean, raw_description, skills)
+        text_for_embedding = build_job_text(
+            title_clean, raw_description, skills,
+            location_city=location.get("city"), location_country=location.get("country"),
+            remote=is_remote,
+        )
         embedding = generate_embedding(text_for_embedding)
 
     return {

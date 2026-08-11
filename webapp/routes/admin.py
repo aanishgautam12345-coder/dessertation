@@ -187,7 +187,11 @@ def job_create():
                 flash("A job with identical title, company, location, and salary already exists.", "error")
                 return redirect(url_for("admin.job_create"))
 
-            text_for_embedding = build_job_text(title_clean, description or "", skills_list or None)
+            text_for_embedding = build_job_text(
+                title_clean, description or "", skills_list or None,
+                location_city=location_city, location_country=location_country,
+                remote=remote,
+            )
             embedding = generate_embedding(text_for_embedding)
 
             quality = score_job(

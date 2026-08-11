@@ -16,13 +16,14 @@ CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
 @dataclass
 class ScoringWeights:
     """A named, versioned set of scoring weights."""
-    version: str = "v1.0"
-    semantic: float = 0.40
-    skills: float = 0.20
+    version: str = "v2.0"
+    semantic: float = 0.25
+    skills: float = 0.25
     location: float = 0.15
-    salary: float = 0.10
+    salary: float = 0.15
     experience: float = 0.10
     job_type: float = 0.05
+    recency: float = 0.05
 
     def to_dict(self) -> dict[str, float]:
         return {
@@ -32,18 +33,20 @@ class ScoringWeights:
             "salary": self.salary,
             "experience": self.experience,
             "job_type": self.job_type,
+            "recency": self.recency,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "ScoringWeights":
         return cls(
             version=data.get("version", "custom"),
-            semantic=data.get("semantic", 0.40),
-            skills=data.get("skills", 0.20),
+            semantic=data.get("semantic", 0.25),
+            skills=data.get("skills", 0.25),
             location=data.get("location", 0.15),
-            salary=data.get("salary", 0.10),
+            salary=data.get("salary", 0.15),
             experience=data.get("experience", 0.10),
             job_type=data.get("job_type", 0.05),
+            recency=data.get("recency", 0.05),
         )
 
 
@@ -62,7 +65,7 @@ def load_weights(version: str | None = None) -> ScoringWeights:
     Returns:
         ScoringWeights instance.
     """
-    if version is None or version == "v1.0":
+    if version is None or version == "v2.0":
         return DEFAULT_WEIGHTS
 
     config_file = CONFIG_DIR / f"scoring_{version}.json"
@@ -99,21 +102,21 @@ ABLATION_WEIGHTS = {
     "semantic_only": ScoringWeights(
         version="ablation_semantic_only",
         semantic=1.0, skills=0.0, location=0.0,
-        salary=0.0, experience=0.0, job_type=0.0,
+        salary=0.0, experience=0.0, job_type=0.0, recency=0.0,
     ),
     "skills_only": ScoringWeights(
         version="ablation_skills_only",
         semantic=0.0, skills=1.0, location=0.0,
-        salary=0.0, experience=0.0, job_type=0.0,
+        salary=0.0, experience=0.0, job_type=0.0, recency=0.0,
     ),
     "no_semantic": ScoringWeights(
         version="ablation_no_semantic",
-        semantic=0.0, skills=0.30, location=0.25,
-        salary=0.20, experience=0.15, job_type=0.10,
+        semantic=0.0, skills=0.35, location=0.20,
+        salary=0.20, experience=0.15, job_type=0.05, recency=0.05,
     ),
     "balanced": ScoringWeights(
         version="balanced",
-        semantic=0.25, skills=0.25, location=0.15,
-        salary=0.15, experience=0.10, job_type=0.10,
+        semantic=0.20, skills=0.25, location=0.15,
+        salary=0.15, experience=0.10, job_type=0.05, recency=0.10,
     ),
 }

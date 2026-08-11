@@ -22,6 +22,15 @@ class TestBuildJobText:
         result = build_job_text("Dev", "", None)
         assert "Dev" in result
 
+    def test_with_location(self):
+        result = build_job_text("Dev", "Desc", None, location_city="London", location_country="UK")
+        assert "London" in result
+        assert "UK" in result
+
+    def test_with_remote(self):
+        result = build_job_text("Dev", "Desc", None, remote=True)
+        assert "Remote available" in result
+
 
 class TestBuildProfileText:
     def test_basic(self):

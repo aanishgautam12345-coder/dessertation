@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from sqlalchemy import Float, select
 from sqlalchemy.orm import Session
@@ -27,6 +28,7 @@ EXPANDED_CANDIDATE_POOL = 80
 QUALITY_THRESHOLD = 0.35
 MIN_ACCEPTABLE_SCORE = 0.15
 RERANK_THRESHOLD = 20
+MIN_SIMILARITY_THRESHOLD = 0.15
 
 # Jobs below this quality score don't get recommended. Set from the real score
 # distribution (min 38.75, avg 48.6, P25 44.75) - 40 catches the actually-bad
@@ -196,6 +198,7 @@ class RecommendationAgent:
                     "salary_fit": round(item["breakdown"].salary_fit * 100, 1),
                     "experience_fit": round(item["breakdown"].experience_fit * 100, 1),
                     "job_type_fit": round(item["breakdown"].job_type_fit * 100, 1),
+                    "recency_score": round(item["breakdown"].recency_score * 100, 1),
                 },
                 "matching_skills": item["breakdown"].matching_skills,
                 "missing_skills": item["breakdown"].missing_skills,
@@ -234,8 +237,14 @@ class RecommendationAgent:
                 .limit(limit)
             )
             results = self.db.execute(stmt).all()
-            jobs = [row[0] for row in results]
-            similarities = [1.0 - row.distance for row in results]
+            jobs = []
+            similarities = []
+            for row in results:
+                sim = 1.0 - row.distance
+                if sim < MIN_SIMILARITY_THRESHOLD:
+                    break
+                jobs.append(row[0])
+                similarities.append(sim)
             return jobs, similarities
         except Exception:
             pass
@@ -273,6 +282,7 @@ class RecommendationAgent:
             scored.append((job, sim))
 
         scored.sort(key=lambda x: x[1], reverse=True)
+        scored = [(j, s) for j, s in scored if s >= MIN_SIMILARITY_THRESHOLD]
         scored = scored[:limit]
 
         jobs = [item[0] for item in scored]
@@ -334,11 +344,16 @@ class RecommendationAgent:
         hard_constraints: dict | None = None,
     ) -> list[dict]:
         """Score every candidate job against the profile using pre-computed similarities."""
-        results = []
+        # Batch-fetch all skills in one query (avoids N+1)
+        all_job_ids = [job.id for job in candidates]
+        all_skills = self.db.query(JobSkill).filter(JobSkill.job_id.in_(all_job_ids)).all()
+        skills_map: dict[uuid.UUID, list[str]] = defaultdict(list)
+        for s in all_skills:
+            skills_map[s.job_id].append(s.skill)
 
+        results = []
         for job, similarity in zip(candidates, similarities):
-            job_skills = [s.skill for s in
-                         self.db.query(JobSkill).filter(JobSkill.job_id == job.id).all()]
+            job_skills = skills_map.get(job.id, [])
 
             breakdown = compute_match_score(
                 profile, job, job_skills, similarity,
@@ -359,18 +374,22 @@ class RecommendationAgent:
             experience_level=profile.experience_level,
         )
 
+        # Batch-fetch skills for all candidates (avoids N+1)
+        all_job_ids = [item["job"].id for item in scored]
+        all_skills = self.db.query(JobSkill).filter(JobSkill.job_id.in_(all_job_ids)).all()
+        skills_map: dict[uuid.UUID, list[str]] = defaultdict(list)
+        for s in all_skills:
+            skills_map[s.job_id].append(s.skill)
+
         candidate_dicts = []
         for item in scored:
             job = item["job"]
-            # Fetch skills for this job
-            job_skills = [s.skill for s in
-                         self.db.query(JobSkill).filter(JobSkill.job_id == job.id).all()]
             candidate_dicts.append({
                 "title": job.title_clean or job.title,
                 "company": job.company or "",
                 "location_city": job.location_city or "",
                 "location_country": job.location_country or "",
-                "skills": job_skills,
+                "skills": skills_map.get(job.id, []),
                 "description": job.description or "",
                 "_original_item": item,
             })
@@ -381,9 +400,11 @@ class RecommendationAgent:
         for cand in reranked:
             item = cand["_original_item"]
             rerank_norm = max(0, min(1, (cand.get("rerank_score", 0) + 10) / 20))
-            blended = 0.7 * item["breakdown"].overall_score + 0.3 * rerank_norm
+            pre_rerank_score = item["breakdown"].overall_score
+            blended = 0.7 * pre_rerank_score + 0.3 * rerank_norm
             item["breakdown"].overall_score = blended
             item["breakdown"].match_percentage = round(blended * 100, 1)
+            item["rerank_adjustment"] = round(blended - pre_rerank_score, 4)
             results.append(item)
 
         return results
@@ -408,6 +429,7 @@ class RecommendationAgent:
                     "salary": round(item["breakdown"].salary_fit, 4),
                     "experience": round(item["breakdown"].experience_fit, 4),
                     "job_type": round(item["breakdown"].job_type_fit, 4),
+                    "recency": round(item["breakdown"].recency_score, 4),
                 },
                 retrieval_method="hnsw_semantic",
                 candidate_pool_position=rank,

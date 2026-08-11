@@ -62,7 +62,7 @@ def rerank_candidates(
             parts.append(f"Skills: {skills}")
         description = c.get("description")
         if description:
-            parts.append(description[:300])
+            parts.append(description[:500])
         doc_text = " | ".join(p for p in parts if p).strip()
         pairs.append((query, doc_text[:MAX_SEQUENCE_LENGTH]))
 

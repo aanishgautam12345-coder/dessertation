@@ -7,16 +7,17 @@ from app.services.scoring_config import ScoringWeights, ABLATION_WEIGHTS
 class TestScoringWeights:
     def test_default_values(self):
         w = ScoringWeights()
-        assert w.semantic == 0.40
-        assert w.skills == 0.20
+        assert w.semantic == 0.25
+        assert w.skills == 0.25
         assert w.location == 0.15
-        assert w.salary == 0.10
+        assert w.salary == 0.15
         assert w.experience == 0.10
         assert w.job_type == 0.05
+        assert w.recency == 0.05
 
     def test_weights_sum_to_one(self):
         w = ScoringWeights()
-        total = w.semantic + w.skills + w.location + w.salary + w.experience + w.job_type
+        total = w.semantic + w.skills + w.location + w.salary + w.experience + w.job_type + w.recency
         assert total == pytest.approx(1.0)
 
     def test_custom_values(self):
@@ -26,10 +27,11 @@ class TestScoringWeights:
             location=0.05,
             salary=0.05,
             experience=0.05,
-            job_type=0.10,
+            job_type=0.05,
+            recency=0.05,
         )
         assert w.semantic == 0.5
-        total = w.semantic + w.skills + w.location + w.salary + w.experience + w.job_type
+        total = w.semantic + w.skills + w.location + w.salary + w.experience + w.job_type + w.recency
         assert total == pytest.approx(1.0)
 
     def test_to_dict(self):
@@ -37,7 +39,8 @@ class TestScoringWeights:
         d = w.to_dict()
         assert isinstance(d, dict)
         assert "semantic" in d
-        assert d["semantic"] == 0.40
+        assert d["semantic"] == 0.25
+        assert d["recency"] == 0.05
 
     def test_from_dict(self):
         d = {

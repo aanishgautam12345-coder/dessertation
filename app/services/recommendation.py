@@ -7,10 +7,12 @@ to exactly why a job scored the way it did:
           + w_salary * salary_fit
           + w_experience * experience_fit
           + w_job_type * job_type_fit
+          + w_recency * recency_score
 
 Weights come from scoring_config.py (versioned, for ablation studies)."""
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from app.models.job import Job
 from app.models.user import UserProfile
@@ -44,6 +46,7 @@ class MatchBreakdown:
     salary_fit: float = 0.0
     experience_fit: float = 0.0
     job_type_fit: float = 0.0
+    recency_score: float = 0.0
 
     matching_skills: list[str] = field(default_factory=list)
     missing_skills: list[str] = field(default_factory=list)
@@ -54,7 +57,7 @@ class MatchBreakdown:
     # Hard constraint filters (applied before scoring)
     passes_hard_filters: bool = True
     hard_filter_failures: list[str] = field(default_factory=list)
-    weight_version: str = "v1.0"
+    weight_version: str = "v2.0"
 
 
 def compute_match_score(
@@ -108,6 +111,8 @@ def compute_match_score(
         job.job_type,
     )
 
+    breakdown.recency_score = _score_recency(job.posted_at)
+
     # Weighted total using configurable weights
     breakdown.overall_score = (
         weights.semantic * breakdown.semantic_similarity +
@@ -115,7 +120,8 @@ def compute_match_score(
         weights.location * breakdown.location_fit +
         weights.salary * breakdown.salary_fit +
         weights.experience * breakdown.experience_fit +
-        weights.job_type * breakdown.job_type_fit
+        weights.job_type * breakdown.job_type_fit +
+        weights.recency * breakdown.recency_score
     )
     breakdown.match_percentage = round(breakdown.overall_score * 100, 1)
 
@@ -170,7 +176,8 @@ def _check_hard_constraints(job: Job, constraints: dict) -> list[str]:
 
 
 def _score_skills(user_skills: list[str], job_skills: list[str]) -> tuple[float, list[str], list[str]]:
-    """Skill overlap = |intersection| / |job skills required|.
+    """Bidirectional skill overlap: balances coverage (what % of job requirements the user
+    meets) with alignment (what % of user skills are relevant to the job).
 
     Both user and job skills are alias-resolved before comparison so that
     e.g. user's "reactjs" matches job's "react", user's "ml" matches "machine learning".
@@ -184,7 +191,12 @@ def _score_skills(user_skills: list[str], job_skills: list[str]) -> tuple[float,
     matching = sorted(user_set & job_set)
     missing = sorted(job_set - user_set)
 
-    score = len(matching) / len(job_set) if job_set else 0.0
+    # Coverage: what fraction of job requirements are met
+    coverage = len(matching) / len(job_set) if job_set else 0.0
+    # Alignment: what fraction of user's listed skills are relevant
+    alignment = len(matching) / len(user_set) if user_set else 0.0
+
+    score = 0.5 * coverage + 0.5 * alignment
     return round(score, 3), matching, missing
 
 
@@ -296,3 +308,31 @@ def _score_job_type(preferred_types: list[str], job_type: str | None) -> float:
             return 1.0
 
     return 0.0
+
+
+def _score_recency(posted_at: datetime | None) -> float:
+    """Recency score: 1.0 for fresh jobs, decaying over time."""
+    if posted_at is None:
+        return 0.5
+
+    now = datetime.now(timezone.utc)
+    if posted_at.tzinfo is None:
+        posted_at = posted_at.replace(tzinfo=timezone.utc)
+
+    age_days = (now - posted_at).days
+
+    if age_days <= 7:
+        return 1.0
+    if age_days <= 14:
+        return 0.9
+    if age_days <= 30:
+        return 0.8
+    if age_days <= 45:
+        return 0.7
+    if age_days <= 60:
+        return 0.6
+    if age_days <= 90:
+        return 0.4
+    if age_days <= 180:
+        return 0.2
+    return 0.1

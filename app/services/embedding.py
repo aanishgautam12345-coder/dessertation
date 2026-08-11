@@ -102,7 +102,9 @@ def generate_embeddings_batch(
     return embeddings.tolist()
 
 
-def build_job_text(title: str, description: str, skills: list[str] | None = None) -> str:
+def build_job_text(title: str, description: str, skills: list[str] | None = None,
+                   location_city: str | None = None, location_country: str | None = None,
+                   remote: bool = False) -> str:
     """Combine job fields into one string for embedding."""
     parts = []
 
@@ -111,6 +113,17 @@ def build_job_text(title: str, description: str, skills: list[str] | None = None
     if clean_title:
         parts.append(clean_title)
         parts.append(clean_title)
+
+    # Include location for geographic relevance in vector search
+    location_parts = []
+    if location_city:
+        location_parts.append(location_city)
+    if location_country:
+        location_parts.append(location_country)
+    if location_parts:
+        parts.append("Location: " + ", ".join(location_parts))
+    if remote:
+        parts.append("Remote available")
 
     if skills:
         parts.append("Required skills: " + ", ".join(skills))

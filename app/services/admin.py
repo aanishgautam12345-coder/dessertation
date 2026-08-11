@@ -148,7 +148,11 @@ def update_job(db: Session, job: Job, values: dict) -> Job:
     if semantic_changed:
         skills = [skill.skill for skill in job.skills]
         job.embedding = generate_embedding(
-            build_job_text(job.title_clean or job.title, job.description or "", skills)
+            build_job_text(
+                job.title_clean or job.title, job.description or "", skills,
+                location_city=job.location_city, location_country=job.location_country,
+                remote=job.remote,
+            )
         )
         job.embedded_at = datetime.now(timezone.utc)
     job.updated_at = datetime.now(timezone.utc)
