@@ -175,6 +175,14 @@ class RecommendationAgent:
         run.completed_at = datetime.utcnow()
         self.db.commit()
 
+        # Trigger instant email notification (fire-and-forget)
+        if final:
+            try:
+                from app.services.notification_trigger import dispatch_notification_async
+                dispatch_notification_async(profile.user_id)
+            except Exception:
+                logger.debug("Could not dispatch notification trigger", exc_info=True)
+
         return [
             {
                 "job_id": str(item["job"].id),

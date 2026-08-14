@@ -54,6 +54,21 @@ def on_startup():
     init_db()
     logger.info("JobMatch started")
 
+    # Start notification scheduler if enabled
+    from app.config import get_settings
+    settings = get_settings()
+    if settings.scheduler_enabled:
+        from app.services.scheduler import start_scheduler
+        start_scheduler()
+        logger.info("Notification scheduler enabled")
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    from app.services.notification_trigger import shutdown_executor
+    shutdown_executor()
+    logger.info("JobMatch shut down")
+
 
 @app.get("/health")
 @limiter.exempt
@@ -71,5 +86,7 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Administration"])
 
 from app.api import recommendations
 from app.api import interactions
+from app.api import notifications
 app.include_router(recommendations.router, prefix="/api/recommendations", tags=["Recommendations"])
 app.include_router(interactions.router, prefix="/api", tags=["Interactions"])
+app.include_router(notifications.router, prefix="/api", tags=["Notifications"])
