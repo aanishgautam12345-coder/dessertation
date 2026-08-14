@@ -62,11 +62,19 @@ def on_startup():
         start_scheduler()
         logger.info("Notification scheduler enabled")
 
+    # Start ingestion scheduler if enabled
+    if settings.scheduler_enabled:
+        from app.services.ingestion_scheduler import start_ingestion_scheduler
+        start_ingestion_scheduler()
+        logger.info("Ingestion scheduler enabled")
+
 
 @app.on_event("shutdown")
 def on_shutdown():
     from app.services.notification_trigger import shutdown_executor
+    from app.services.ingestion_scheduler import stop_ingestion_scheduler
     shutdown_executor()
+    stop_ingestion_scheduler()
     logger.info("JobMatch shut down")
 
 
