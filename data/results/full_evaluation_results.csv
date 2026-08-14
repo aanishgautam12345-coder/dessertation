@@ -1,0 +1,5 @@
+system,num_queries,total_results,P@5,Graded_P@5,MAP@5,MRR@5,NDCG@5,Hit_Rate@5,Avg_Relevant_Found@5,P@10,Graded_P@10,MAP@10,MRR@10,NDCG@10,Hit_Rate@10,Avg_Relevant_Found@10,Avg_Latency_ms,P95_Latency_ms,Category_Diversity,Top_3_Categories
+Baseline 1: Keyword (BM25),25,125,0.0,0.0,0.011,0.011,0.0,0.12,0.12,0.004,0.001,0.011,0.011,0.014,0.12,0.12,32.6,53.9,0.028,"{'Human Resources': 322, 'Information Technology': 88, 'Other': 46}"
+Baseline 2: Rule-Based (No Embeddings),25,125,0.008,0.005,0.04,0.04,0.04,0.04,0.04,0.004,0.003,0.04,0.04,0.04,0.04,0.04,4941.7,5293.7,0.02,"{'Software Engineering': 150, 'Data Science & Analytics': 102, 'DevOps & Infrastructure': 79}"
+Baseline 3: Embedding Only,25,125,0.36,0.16,0.532,0.664,0.541,0.96,3.24,0.236,0.101,0.532,0.664,0.59,0.96,3.24,2339.5,2470.9,0.036,"{'Other': 78, 'Software Engineering': 63, 'DevOps & Infrastructure': 43}"
+Proposed System (Full),25,125,0.592,0.269,0.709,0.709,0.597,0.96,5.08,0.508,0.227,0.709,0.709,0.735,0.96,5.08,50.9,53.2,0.044,"{'Other': 59, 'Software Engineering': 56, 'Sales & Business Development': 42}"
