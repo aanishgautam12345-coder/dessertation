@@ -59,7 +59,7 @@ class CsvSource(JobSource):
                 )
             )
 
-        print(f"✓ Parsed {len(records)} jobs from CSV.")
+        print(f"OK: Parsed {len(records)} jobs from CSV.")
         return records
 
 

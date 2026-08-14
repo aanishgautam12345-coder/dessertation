@@ -80,7 +80,7 @@ def seed(source_name: str, file_path: str | None = None, limit: int | None = Non
                 skipped += 1
 
         db.commit()
-        print(f"\n✓ Seed complete: {inserted} inserted, {skipped} skipped (duplicates).")
+        print(f"\nSeed complete: {inserted} inserted, {skipped} skipped (duplicates).")
         print(f"  Total raw_jobs in DB: {db.query(RawJob).count()}")
     finally:
         db.close()

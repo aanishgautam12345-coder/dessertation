@@ -39,9 +39,9 @@ def main():
         print("=" * 60)
 
         if args.no_embeddings:
-            print("  ⚡ Embedding generation SKIPPED (--no-embeddings)")
+            print("  [FAST] Embedding generation SKIPPED (--no-embeddings)")
         else:
-            print("  🧠 Embedding generation ENABLED (first run downloads the model)")
+            print("  [MODEL] Embedding generation ENABLED (first run downloads the model)")
             print("     This may take a few minutes on the first run ...")
 
         print()

@@ -111,7 +111,7 @@ class CsvDescriptions2Source(JobSource):
                 )
             )
 
-        print(f"✓ Parsed {len(records)} jobs from CSV ({skipped} skipped - no title/description).")
+        print(f"OK: Parsed {len(records)} jobs from CSV ({skipped} skipped - no title/description).")
         return records
 
 
