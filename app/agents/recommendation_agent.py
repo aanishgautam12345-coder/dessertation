@@ -19,6 +19,7 @@ from app.services.embedding import build_profile_text, generate_embedding
 from app.services.recommendation import compute_match_score, MatchBreakdown
 from app.services.reranker import is_reranker_available, rerank_candidates
 from app.services.scoring_config import load_weights
+from app.services.feedback_loop import FeedbackLoop
 
 logger = logging.getLogger(__name__)
 
@@ -351,13 +352,20 @@ class RecommendationAgent:
         self, profile: UserProfile, candidates: list[Job], similarities: list[float],
         hard_constraints: dict | None = None,
     ) -> list[dict]:
-        """Score every candidate job against the profile using pre-computed similarities."""
+        """Score every candidate job against the profile using pre-computed similarities.
+        
+        Applies feedback loop adjustments based on user's interaction history.
+        """
         # Batch-fetch all skills in one query (avoids N+1)
         all_job_ids = [job.id for job in candidates]
         all_skills = self.db.query(JobSkill).filter(JobSkill.job_id.in_(all_job_ids)).all()
         skills_map: dict[uuid.UUID, list[str]] = defaultdict(list)
         for s in all_skills:
             skills_map[s.job_id].append(s.skill)
+
+        # Get feedback adjustments for this user
+        feedback_loop = FeedbackLoop(self.db)
+        adjustments = feedback_loop.get_user_adjustments(profile.user_id)
 
         results = []
         for job, similarity in zip(candidates, similarities):
@@ -368,6 +376,14 @@ class RecommendationAgent:
                 profile.preferred_job_types,
                 hard_constraints=hard_constraints,
             )
+
+            # Apply feedback-based adjustments if we have enough data
+            if adjustments.num_interactions >= 5:
+                adjusted_score = feedback_loop.apply_feedback_boost(
+                    profile.user_id, job, breakdown.overall_score, adjustments
+                )
+                breakdown.overall_score = adjusted_score
+                breakdown.match_percentage = round(adjusted_score * 100, 1)
 
             results.append({"job": job, "breakdown": breakdown})
 

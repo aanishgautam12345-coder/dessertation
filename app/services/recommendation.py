@@ -68,13 +68,17 @@ def compute_match_score(
     preferred_job_types: list[str] | None = None,
     weight_version: str | None = None,
     hard_constraints: dict | None = None,
+    weights: ScoringWeights | None = None,
 ) -> MatchBreakdown:
     """Compute the full match score for a profile/job pair.
 
     hard_constraints, if given, must ALL pass or the job scores 0 - expected keys:
     "locations" (list[str]), "remote_only" (bool), "min_salary" (float), "job_types" (list[str]).
+    
+    weights, if given, overrides weight_version for scoring.
     """
-    weights = load_weights(weight_version)
+    if weights is None:
+        weights = load_weights(weight_version)
     breakdown = MatchBreakdown(
         semantic_similarity=semantic_similarity,
         weight_version=weights.version,
