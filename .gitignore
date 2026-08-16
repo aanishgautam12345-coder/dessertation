@@ -26,3 +26,6 @@ Thumbs.db
 
 # Evaluation labels (researcher-specific)
 scripts/eval_labels.json
+
+# Evaluation results (large, regenerated)
+evaluation_results/

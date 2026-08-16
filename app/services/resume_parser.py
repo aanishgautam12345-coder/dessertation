@@ -111,6 +111,8 @@ class ResumeExtraction(BaseModel):
             return None
         if isinstance(v, bool):
             raise ValueError("Boolean is not a valid experience year value")
+        if isinstance(v, float):
+            v = round(v)
         if not isinstance(v, int):
             raise ValueError(f"Expected integer or null, got {type(v).__name__}")
         if v < 0 or v > 50:
@@ -169,7 +171,7 @@ def _build_resume_schema() -> dict:
             "email": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "phone": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "skills": {"type": "array", "items": {"type": "string"}},
-            "experience_years": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+            "experience_years": {"anyOf": [{"type": "number"}, {"type": "null"}]},
             "experience_level": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "preferred_locations": {"type": "array", "items": {"type": "string"}},
             "education": {"anyOf": [{"type": "string"}, {"type": "null"}]},
