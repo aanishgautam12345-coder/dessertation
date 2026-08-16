@@ -16,12 +16,12 @@ CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
 @dataclass
 class ScoringWeights:
     """A named, versioned set of scoring weights."""
-    version: str = "v2.0"
+    version: str = "v3.0"
     semantic: float = 0.25
-    skills: float = 0.25
+    skills: float = 0.30
     location: float = 0.15
-    salary: float = 0.15
-    experience: float = 0.10
+    salary: float = 0.12
+    experience: float = 0.08
     job_type: float = 0.05
     recency: float = 0.05
 
@@ -65,7 +65,7 @@ def load_weights(version: str | None = None) -> ScoringWeights:
     Returns:
         ScoringWeights instance.
     """
-    if version is None or version == "v2.0":
+    if version is None or version == "v3.0":
         return DEFAULT_WEIGHTS
 
     config_file = CONFIG_DIR / f"scoring_{version}.json"

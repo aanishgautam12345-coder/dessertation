@@ -39,11 +39,40 @@ def search_evidence(
     q: str = Query(..., description="Search query (short technical terms work best)"),
     limit: int = Query(20, ge=1, le=50),
     enable_fallback: bool = Query(True, description="Enable semantic fallback for few results"),
+    rerank: bool = Query(False, description="Apply cross-encoder reranking"),
+    llm_rerank: bool = Query(False, description="Apply LLM re-scoring (requires auth)"),
+    user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ):
     """Requires real lexical evidence for short queries like "Azure" or "Docker";
-    only falls back to semantic similarity if there aren't enough matches."""
-    results = evidence_search(db, query=q, limit=limit, enable_semantic_fallback=enable_fallback)
+    only falls back to semantic similarity if there aren't enough matches.
+
+    AI pipelines (optional):
+      - rerank: cross-encoder reranking for higher precision
+      - llm_rerank: LLM re-scoring with profile context (requires authentication)
+    """
+    profile_text = None
+    if llm_rerank and user:
+        profile = db.query(UserProfile).filter(UserProfile.user_id == user.id).first()
+        if profile:
+            parts = []
+            if profile.headline:
+                parts.append(profile.headline)
+            if profile.skills:
+                parts.append("Skills: " + ", ".join(profile.skills[:15]))
+            if profile.career_interests:
+                parts.append(profile.career_interests)
+            if profile.experience_level:
+                parts.append(f"Experience: {profile.experience_level}")
+            profile_text = " | ".join(parts)
+
+    results = evidence_search(
+        db, query=q, limit=limit,
+        enable_semantic_fallback=enable_fallback,
+        rerank=rerank,
+        llm_rerank=llm_rerank and bool(profile_text),
+        profile_text=profile_text,
+    )
     return {"query": q, "count": len(results), "results": results}
 
 
@@ -55,6 +84,7 @@ def search_hybrid(
     category: str | None = Query(None, description="Filter by canonical category"),
     min_salary: float | None = Query(None),
     limit: int = Query(10, ge=1, le=50),
+    rerank: bool = Query(False, description="Apply cross-encoder reranking"),
     recommended: bool = Query(False, description="Rank using the authenticated user's profile"),
     user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db),

@@ -101,6 +101,7 @@
                     <span class="hidden lg:block text-xs font-medium text-[#00000099]">Me ▾</span>
                 </a>
                 <form method="POST" action="{{ url_for('auth.logout') }}" class="inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="text-xs font-medium text-[#66615b] hover:text-[#000000e6] transition px-2 py-1 hidden sm:block">Sign out</button>
                 </form>
                 {% else %}

@@ -16,7 +16,7 @@ main_bp = Blueprint("main", __name__)
 
 
 def _profile_feed(db: Session, profile: UserProfile, limit: int = 20) -> list:
-    """Find jobs semantically similar to the user's profile embedding."""
+    """Find latest jobs semantically similar to the user's profile embedding."""
     if profile.profile_embedding is None:
         return []
 
@@ -30,7 +30,7 @@ def _profile_feed(db: Session, profile: UserProfile, limit: int = 20) -> list:
             FROM jobs j
             WHERE j.embedding IS NOT NULL
               AND j.is_active = true
-            ORDER BY j.embedding <=> :profile_vec
+            ORDER BY j.created_at DESC, j.embedding <=> :profile_vec
             LIMIT :lim
         """)
         rows = db.execute(stmt, {
@@ -43,7 +43,7 @@ def _profile_feed(db: Session, profile: UserProfile, limit: int = 20) -> list:
 
 
 def _saved_feed(db: Session, user_id, limit: int = 20) -> list:
-    """Find jobs similar to the user's saved jobs via embedding."""
+    """Find latest jobs similar to the user's saved jobs via embedding."""
     saved_uuids = [
         uuid.UUID(str(s.job_id))
         for s in db.query(SavedJob).filter(SavedJob.user_id == user_id).all()
@@ -69,7 +69,7 @@ def _saved_feed(db: Session, user_id, limit: int = 20) -> list:
                      j.location_city, j.location_country, j.remote,
                      j.salary_min, j.salary_max, j.salary_currency,
                      j.category, j.job_type, j.url, j.source, j.created_at
-            ORDER BY similarity DESC
+            ORDER BY j.created_at DESC, similarity DESC
             LIMIT :lim
         """)
         rows = db.execute(stmt, {"saved_uuids": saved_uuids, "lim": limit}).fetchall()

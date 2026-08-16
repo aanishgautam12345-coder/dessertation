@@ -70,7 +70,7 @@ def search():
                 )
                 results = results[(page - 1) * page_size:]
             else:
-                results = evidence_search(db, query=query, limit=page * page_size)
+                results = evidence_search(db, query=query, limit=page * page_size, rerank=True)
                 results = results[(page - 1) * page_size:]
 
             # Apply company filter (client-side on current results)
@@ -267,6 +267,150 @@ def explain(job_id):
         if result.error:
             response["error"] = result.error
         return jsonify(response)
+    finally:
+        db.close()
+
+
+@jobs_bp.route("/feed/new")
+@login_required
+def feed_new():
+    """Return new jobs posted since a given timestamp, ranked by profile relevance.
+
+    Uses the user's profile embedding for semantic similarity when available.
+    Falls back to saved-job similarity, then chronological order.
+    """
+    from datetime import datetime
+    from sqlalchemy import text
+
+    since_str = request.args.get("since", "")
+    limit = min(request.args.get("limit", 10, type=int), 20)
+
+    db = SessionLocal()
+    try:
+        profile = db.query(UserProfile).filter(
+            UserProfile.user_id == current_user.id
+        ).first()
+
+        saved_ids = {
+            str(s.job_id) for s in
+            db.query(SavedJob).filter(SavedJob.user_id == current_user.id).all()
+        }
+
+        # Base filter: new jobs since timestamp, active only
+        time_filter = ""
+        params = {"lim": limit * 3}
+        if since_str:
+            try:
+                since = datetime.fromisoformat(since_str.replace("Z", "+00:00"))
+                time_filter = "AND j.created_at > :since"
+                params["since"] = since
+            except ValueError:
+                pass
+
+        new_jobs = []
+
+        # 1) Profile-based: find new jobs semantically similar to user's profile
+        if profile and profile.profile_embedding is not None:
+            try:
+                stmt = text(f"""
+                    SELECT j.id, j.title, j.title_clean, j.company,
+                           j.location_city, j.location_country, j.remote,
+                           j.salary_min, j.salary_max, j.salary_currency,
+                           j.category, j.job_type, j.url, j.source, j.created_at,
+                           (1 - (j.embedding <=> :profile_vec)) AS similarity
+                    FROM jobs j
+                    WHERE j.embedding IS NOT NULL
+                      AND j.is_active = true
+                      {time_filter}
+                    ORDER BY j.embedding <=> :profile_vec
+                    LIMIT :lim
+                """)
+                params["profile_vec"] = str(profile.profile_embedding)
+                rows = db.execute(stmt, params).fetchall()
+                new_jobs = rows
+            except Exception:
+                pass
+
+        # 2) Saved-job similarity: find new jobs similar to user's saved jobs
+        if not new_jobs and saved_ids:
+            try:
+                saved_uuids = [uuid.UUID(sid) for sid in saved_ids]
+                params["saved_uuids"] = saved_uuids
+                # Remove profile_vec if it was set
+                params.pop("profile_vec", None)
+                stmt = text(f"""
+                    SELECT DISTINCT j.id, j.title, j.title_clean, j.company,
+                           j.location_city, j.location_country, j.remote,
+                           j.salary_min, j.salary_max, j.salary_currency,
+                           j.category, j.job_type, j.url, j.source, j.created_at,
+                           MAX(1 - (j.embedding <=> ref.embedding)) AS similarity
+                    FROM jobs j
+                    CROSS JOIN jobs ref
+                    WHERE ref.id = ANY(SELECT unnest(:saved_uuids))
+                      AND j.id != ref.id
+                      AND j.embedding IS NOT NULL
+                      AND ref.embedding IS NOT NULL
+                      AND j.is_active = true
+                      {time_filter}
+                    GROUP BY j.id, j.title, j.title_clean, j.company,
+                             j.location_city, j.location_country, j.remote,
+                             j.salary_min, j.salary_max, j.salary_currency,
+                             j.category, j.job_type, j.url, j.source, j.created_at
+                    ORDER BY similarity DESC
+                    LIMIT :lim
+                """)
+                rows = db.execute(stmt, params).fetchall()
+                new_jobs = rows
+            except Exception:
+                pass
+
+        # 3) Fallback: all new jobs (chronological)
+        if not new_jobs:
+            query = db.query(Job).filter(Job.is_active.is_(True))
+            if since_str:
+                try:
+                    since = datetime.fromisoformat(since_str.replace("Z", "+00:00"))
+                    query = query.filter(Job.created_at > since)
+                except ValueError:
+                    pass
+            new_jobs = query.order_by(Job.created_at.desc()).limit(limit).all()
+
+        results = []
+        for job in new_jobs:
+            # Handle both Row objects (from raw SQL) and Job model instances
+            job_id = str(job.id) if hasattr(job, "id") else str(job[0])
+            title = job.title_clean or job.title if hasattr(job, "title_clean") else (job[2] or job[1])
+            company = job.company if hasattr(job, "company") else job[3]
+            results.append({
+                "id": job_id,
+                "title": title,
+                "company": company,
+                "location_city": job.location_city if hasattr(job, "location_city") else job[4],
+                "location_country": job.location_country if hasattr(job, "location_country") else job[5],
+                "remote": job.remote if hasattr(job, "remote") else job[6],
+                "salary_min": job.salary_min if hasattr(job, "salary_min") else job[7],
+                "salary_max": job.salary_max if hasattr(job, "salary_max") else job[8],
+                "salary_currency": job.salary_currency if hasattr(job, "salary_currency") else job[9],
+                "category": job.category if hasattr(job, "category") else job[10],
+                "job_type": job.job_type if hasattr(job, "job_type") else job[11],
+                "url": job.url if hasattr(job, "url") else job[12],
+                "source": job.source if hasattr(job, "source") else job[13],
+                "is_saved": job_id in saved_ids,
+            })
+
+        newest_time = None
+        if new_jobs:
+            job0 = new_jobs[0]
+            newest_time = (job0.created_at.isoformat() if hasattr(job0, "created_at")
+                           else (job0[14].isoformat() if hasattr(job0[14], "isoformat") else str(job0[14])))
+        if not newest_time:
+            newest_time = since_str
+
+        return jsonify({
+            "jobs": results,
+            "count": len(results),
+            "newest_time": newest_time,
+        })
     finally:
         db.close()
 

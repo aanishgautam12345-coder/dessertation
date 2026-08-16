@@ -31,11 +31,12 @@
                 </div>
             </div>
 
+
             <div class="flex items-center justify-between mb-3">
                 {% if feed_source == 'profile' %}
-                <h2 class="text-base font-semibold text-[#000000e6]">Recommended for you</h2>
+                <h2 class="text-base font-semibold text-[#000000e6]">Latest matching jobs</h2>
                 {% elif feed_source == 'saved' %}
-                <h2 class="text-base font-semibold text-[#000000e6]">Jobs like your saved ones</h2>
+                <h2 class="text-base font-semibold text-[#000000e6]">Latest jobs like your saved ones</h2>
                 {% else %}
                 <h2 class="text-base font-semibold text-[#000000e6]">Recently added</h2>
                 {% endif %}
@@ -43,12 +44,12 @@
             </div>
 
             {% if feed_source == 'profile' %}
-            <p class="text-xs text-[#999589] mb-3">Based on your profile skills and preferences</p>
+            <p class="text-xs text-[#999589] mb-3">Latest jobs matching your profile skills and preferences</p>
             {% elif feed_source == 'saved' %}
-            <p class="text-xs text-[#999589] mb-3">Based on the {{ saved_ids|length }} job{{ 's' if saved_ids|length != 1 }} you saved</p>
+            <p class="text-xs text-[#999589] mb-3">Latest jobs similar to the {{ saved_ids|length }} job{{ 's' if saved_ids|length != 1 }} you saved</p>
             {% endif %}
 
-            <div class="space-y-3">
+            <div id="feed-container" class="space-y-3">
                 {% for job in feed_jobs %}
                 <div class="li-card p-4 hover:shadow-md transition-shadow">
                     <div class="flex items-start gap-3">
@@ -113,4 +114,130 @@
         </div>
     </div>
 </div>
+
+<script>
+(function() {
+    let newestTime = "{{ feed_jobs[0].created_at.isoformat() if feed_jobs and feed_jobs[0].created_at is defined else '' }}";
+    let mergedIds = new Set();
+    // Pre-populate with IDs already on the page
+    {% for job in feed_jobs %}
+    mergedIds.add("{{ job.id }}");
+    {% endfor %}
+
+    function esc(str) {
+        if (!str) return '';
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+    }
+
+    function formatSalary(min, max, currency) {
+        if (min == null && max == null) return '';
+        let parts = [];
+        if (min != null && max != null) {
+            parts = [Number(min).toLocaleString() + '–' + Number(max).toLocaleString()];
+        } else if (max != null) {
+            parts = ['Up to ' + Number(max).toLocaleString()];
+        } else {
+            parts = ['From ' + Number(min).toLocaleString()];
+        }
+        return parts[0] + ' ' + (currency || '');
+    }
+
+    function renderJobCard(job) {
+        let hash = 0;
+        const company = job.company || '';
+        for (let i = 0; i < company.length; i++) {
+            hash = company.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const hue = Math.abs(hash) % 360;
+        const bgColor = 'hsl(' + hue + ', 45%, 85%)';
+        const textColor = 'hsl(' + hue + ', 55%, 35%)';
+        const initials = company ? company.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase() : '?';
+
+        const savedSvg = job.is_saved
+            ? '<svg class="w-5 h-5 fill-brand-600 text-brand-600" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z"/></svg>'
+            : '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z"/></svg>';
+
+        let tags = '';
+        if (job.category) tags += '<span class="tag">' + esc(job.category) + '</span>';
+        if (job.job_type) tags += '<span class="tag">' + esc(job.job_type) + '</span>';
+        if (job.remote) tags += '<span class="tag-green tag">Remote</span>';
+        if (job.source) tags += '<span class="tag text-[#66615b]">' + esc(job.source) + '</span>';
+
+        const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
+        const location = esc(job.location_city || job.location_country || 'Location N/A');
+        const remoteBadge = job.remote ? ' · Remote' : '';
+        const salarySep = salary ? ' · ' + salary : '';
+
+        return '<div class="li-card p-4 hover:shadow-md transition-shadow new-job-card">' +
+            '<div class="flex items-start gap-3">' +
+                '<div class="company-logo" style="background:' + bgColor + ';color:' + textColor + '">' + esc(initials) + '</div>' +
+                '<div class="flex-1 min-w-0">' +
+                    '<a href="/jobs/' + esc(job.id) + '" class="font-semibold text-[#000000e6] hover:text-brand-600 hover:underline text-sm">' + esc(job.title) + '</a>' +
+                    '<div class="text-sm text-[#00000099]">' + esc(job.company || 'N/A') + '</div>' +
+                    '<div class="text-xs text-[#00000099] mt-1">' + location + remoteBadge + salarySep + '</div>' +
+                    '<div class="flex items-center gap-2 mt-2 flex-wrap">' + tags + '</div>' +
+                '</div>' +
+                '<button onclick="toggleSave(\'' + esc(job.id) + '\', this)" data-saved="' + (job.is_saved ? 'true' : 'false') + '" class="shrink-0 text-brand-600 hover:text-brand-700">' + savedSvg + '</button>' +
+            '</div>' +
+        '</div>';
+    }
+
+    function mergeNewJobs(jobs) {
+        const container = document.getElementById('feed-container');
+        // Remove the "no jobs" placeholder if present
+        const placeholder = container.querySelector('.li-card.p-8.text-center');
+        if (placeholder) placeholder.remove();
+
+        jobs.forEach(function(job) {
+            if (mergedIds.has(job.id)) return;
+            mergedIds.add(job.id);
+
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = renderJobCard(job);
+            const card = wrapper.firstElementChild;
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(-8px)';
+            container.insertBefore(card, container.firstChild);
+
+            requestAnimationFrame(function() {
+                card.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+                card.style.opacity = '1';
+                card.style.transform = 'translateY(0)';
+            });
+        });
+    }
+
+    function pollForNewJobs() {
+        if (!newestTime) return;
+
+        fetch('{{ url_for("jobs.feed_new") }}?since=' + encodeURIComponent(newestTime))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.jobs && data.jobs.length > 0) {
+                    mergeNewJobs(data.jobs);
+                }
+                if (data.newest_time) {
+                    newestTime = data.newest_time;
+                }
+            })
+            .catch(function() {});
+    }
+
+    // Start polling: first check after 10s, then every 60s
+    if (newestTime) {
+        setTimeout(function() {
+            pollForNewJobs();
+            setInterval(pollForNewJobs, 60000);
+        }, 10000);
+    }
+})();
+</script>
+
+<style>
+.new-job-card {
+    border-left: 3px solid var(--color-brand-500, #3b82f6);
+}
+</style>
 {% endblock %}

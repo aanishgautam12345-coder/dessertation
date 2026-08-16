@@ -101,6 +101,7 @@ def compute_match_score(
     breakdown.location_fit = _score_location(
         profile.preferred_locations or [],
         job.location_city, job.location_country, job.remote,
+        getattr(job, 'workplace_type', None),
     )
 
     breakdown.salary_fit = _score_salary(
@@ -179,12 +180,22 @@ def _check_hard_constraints(job: Job, constraints: dict) -> list[str]:
     return failures
 
 
-def _score_skills(user_skills: list[str], job_skills: list[str]) -> tuple[float, list[str], list[str]]:
-    """Bidirectional skill overlap: balances coverage (what % of job requirements the user
-    meets) with alignment (what % of user skills are relevant to the job).
+def _score_skills(
+    user_skills: list[str],
+    job_skills: list[str],
+    job_skill_classifications: dict[str, str] | None = None,
+) -> tuple[float, list[str], list[str]]:
+    """Bidirectional skill overlap with classification-weighted scoring.
+
+    Balances coverage (what % of job requirements the user meets) with
+    alignment (what % of user skills are relevant to the job).
 
     Both user and job skills are alias-resolved before comparison so that
     e.g. user's "reactjs" matches job's "react", user's "ml" matches "machine learning".
+
+    job_skill_classifications, if provided, maps canonical skill name to one of
+    "required", "preferred", "desirable", "mentioned". Required skills carry
+    more weight in the coverage calculation.
     """
     if not job_skills:
         return 0.5, [], []
@@ -195,12 +206,40 @@ def _score_skills(user_skills: list[str], job_skills: list[str]) -> tuple[float,
     matching = sorted(user_set & job_set)
     missing = sorted(job_set - user_set)
 
-    # Coverage: what fraction of job requirements are met
-    coverage = len(matching) / len(job_set) if job_set else 0.0
+    if job_skill_classifications:
+        # Weighted coverage: required=1.0, preferred=0.7, desirable=0.5, mentioned=0.3
+        class_weights = {
+            "required": 1.0, "preferred": 0.7,
+            "desirable": 0.5, "mentioned": 0.3,
+        }
+        weighted_total = 0.0
+        weighted_met = 0.0
+        for skill in job_set:
+            w = class_weights.get(
+                job_skill_classifications.get(skill, "required"), 1.0
+            )
+            weighted_total += w
+            if skill in user_set:
+                weighted_met += w
+
+        coverage = weighted_met / weighted_total if weighted_total else 0.0
+    else:
+        coverage = len(matching) / len(job_set) if job_set else 0.0
+
     # Alignment: what fraction of user's listed skills are relevant
     alignment = len(matching) / len(user_set) if user_set else 0.0
 
-    score = 0.5 * coverage + 0.5 * alignment
+    score = 0.6 * coverage + 0.4 * alignment
+
+    # Bonus: if user covers ALL required skills, give a boost
+    if job_skill_classifications:
+        required_skills = {
+            s for s, c in job_skill_classifications.items() if c == "required"
+        }
+        required_resolved = {_resolve_alias(s) for s in required_skills}
+        if required_resolved and required_resolved.issubset(user_set):
+            score = min(score + 0.1, 1.0)
+
     return round(score, 3), matching, missing
 
 
@@ -209,8 +248,18 @@ def _score_location(
     job_city: str | None,
     job_country: str | None,
     job_remote: bool,
+    job_workplace_type: str | None = None,
 ) -> float:
-    """Location fit: 1.0 if remote or exact match, 0.5 partial, 0.0 no match."""
+    """Location fit with tiered scoring for proximity and remote flexibility.
+
+    Scoring tiers:
+      1.0  – remote job, or city-level match
+      0.85 – hybrid with city match (flexible commute)
+      0.7  – same country / region match
+      0.5  – no preferences set, or remote/hybrid listed as preference
+      0.25 – country-level partial match
+      0.0  – no match
+    """
     if job_remote:
         return 1.0
 
@@ -218,18 +267,58 @@ def _score_location(
         return 0.5
 
     job_location_text = f"{job_city or ''} {job_country or ''}".lower()
+    workplace_lower = (job_workplace_type or "").lower()
 
+    # Exact city-level match
     for pref in preferred_locations:
         pref_lower = pref.lower().strip()
         if pref_lower and pref_lower in job_location_text:
+            if workplace_lower == "hybrid":
+                return 0.85
             return 1.0
 
+    # Check for remote/hybrid preference keywords in user's preferences
+    remote_prefs = {"remote", "work from home", "wfh", "anywhere", "hybrid"}
+    for pref in preferred_locations:
+        if pref.lower().strip() in remote_prefs:
+            if job_remote or workplace_lower in ("hybrid", "remote"):
+                return 0.9
+            return 0.3
+
+    # Country / region match
     if job_country:
+        job_country_lower = job_country.lower()
         for pref in preferred_locations:
-            if job_country.lower() in pref.lower() or pref.lower() in job_country.lower():
+            pref_lower = pref.lower().strip()
+            if not pref_lower:
+                continue
+            # Direct country name match
+            if job_country_lower == pref_lower:
+                return 0.7
+            # Partial containment (e.g. "london" in "united kingdom" check)
+            if pref_lower in job_country_lower or job_country_lower in pref_lower:
                 return 0.6
+            # Region-level match (e.g. "europe" matching "Germany")
+            if _is_region_match(pref_lower, job_country_lower):
+                return 0.55
 
     return 0.0
+
+
+def _is_region_match(pref: str, country: str) -> bool:
+    """Check if a preference string is a broad region matching a country."""
+    REGIONS = {
+        "europe": {"uk", "united kingdom", "germany", "france", "spain", "netherlands",
+                    "ireland", "sweden", "denmark", "finland", "norway", "italy",
+                    "portugal", "belgium", "austria", "switzerland", "poland", "czech"},
+        "north america": {"united states", "usa", "canada", "mexico"},
+        "asia pacific": {"australia", "new zealand", "singapore", "japan", "india"},
+        "uk": {"united kingdom", "england", "scotland", "wales"},
+    }
+    for region, countries in REGIONS.items():
+        if pref == region and country in countries:
+            return True
+    return False
 
 
 def _convert_to_usd(amount: float, currency: str | None) -> float:

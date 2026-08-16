@@ -8,10 +8,10 @@ class TestScoringWeights:
     def test_default_values(self):
         w = ScoringWeights()
         assert w.semantic == 0.25
-        assert w.skills == 0.25
+        assert w.skills == 0.30
         assert w.location == 0.15
-        assert w.salary == 0.15
-        assert w.experience == 0.10
+        assert w.salary == 0.12
+        assert w.experience == 0.08
         assert w.job_type == 0.05
         assert w.recency == 0.05
 

@@ -1,7 +1,14 @@
 ﻿"""Job search: keyword_search (plain Postgres full-text), semantic_search (vector
 similarity), and evidence_search (lexical-first, only falls back to semantic when a
-short/technical query like "Azure" or "Docker" doesn't have enough direct matches)."""
+short/technical query like "Azure" or "Docker" doesn't have enough direct matches).
 
+Enhanced with AI pipelines:
+  - Query understanding (LLM intent classification + expansion)
+  - Cross-encoder reranking (applied to all search modes)
+  - LLM re-scoring (optional, for high-precision results)
+"""
+
+import logging
 import re
 from dataclasses import dataclass, field
 from sqlalchemy import Float, select, func, text, or_
@@ -9,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.models.job import Job, JobSkill
 from app.services.embedding import generate_embedding
+
+logger = logging.getLogger(__name__)
 
 
 # ── pgvector Similarity Helpers ──
@@ -291,7 +300,13 @@ def _filter_dicts_by_quality(
 
 
 def _is_technical_query(query: str) -> bool:
-    """Detect if a query is a short technical term (skill/platform/language)."""
+    """Detect if a query is a short technical term (skill/platform/language).
+
+    Returns True for:
+      - Known technical aliases (azure, docker, react, etc.)
+      - Short queries (<=3 tokens) that look like skill names
+      - Multi-word technical phrases (e.g. "machine learning", "power bi")
+    """
     tokens = _normalise_query(query).split()
     if len(tokens) > TECH_QUERY_MAX_LENGTH:
         return False
@@ -300,18 +315,44 @@ def _is_technical_query(query: str) -> bool:
     for tech_term in TECH_ALIASES:
         if q_lower == tech_term or q_lower in TECH_ALIASES[tech_term]:
             return True
-    # Also treat single multi-word terms as technical (e.g. "Power BI")
+    # Also check skill dictionary for known skills
+    from app.processing.skills import ALL_SKILLS
+    if q_lower in ALL_SKILLS:
+        return True
+    # Check if any individual token is a known skill
+    for token in tokens:
+        if token in ALL_SKILLS:
+            return True
+    # Treat short alpha-only queries as technical (likely skill searches)
     if len(tokens) <= 2 and all(t.isalpha() or t in "#+." for t in tokens):
         return True
     return False
 
 
 def _get_aliases(query: str) -> list[str]:
-    """Get validated aliases for a technical query."""
+    """Get validated aliases for a technical query.
+
+    Checks TECH_ALIASES first, then falls back to skill dictionary aliases,
+    and always includes the raw query text as a fallback alias.
+    """
     q_lower = _normalise_query(query)
     if q_lower in TECH_ALIASES:
         return TECH_ALIASES[q_lower]
-    # Fallback: use the query itself
+
+    # Check skill dictionary for aliases
+    from app.processing.skills import SKILL_ALIASES as ProcessingAliases
+    if q_lower in ProcessingAliases:
+        return list(ProcessingAliases[q_lower]) + [q_lower]
+    # Check reverse alias lookup
+    from app.processing.skills import _resolve_alias
+    canonical = _resolve_alias(q_lower)
+    if canonical != q_lower:
+        return [canonical, q_lower]
+
+    # Multi-word query: also search as phrase
+    if len(q_lower.split()) > 1:
+        return [q_lower]
+
     return [q_lower]
 
 
@@ -329,7 +370,11 @@ def _escape_like(value: str) -> str:
 
 
 def _build_lexical_evidence_query(query: str):
-    """Build a SQL query that searches for lexical evidence of the query."""
+    """Build SQL conditions that search for lexical evidence of the query.
+
+    For multi-word queries, searches for the full phrase AND individual tokens.
+    For single-word queries, searches for the word and its aliases.
+    """
     aliases = _get_aliases(query)
     alias_conditions = []
     for alias in aliases:
@@ -340,11 +385,28 @@ def _build_lexical_evidence_query(query: str):
         alias_conditions.append(Job.requirements.ilike(pattern, escape="\\"))
         alias_conditions.append(Job.responsibilities.ilike(pattern, escape="\\"))
 
+    # For multi-word queries, also search for individual tokens
+    tokens = _normalise_query(query).split()
+    if len(tokens) > 1:
+        for token in tokens:
+            if len(token) < 2:
+                continue
+            token_pat = f"%{_escape_like(token)}%"
+            # Only boost title matches for individual tokens
+            alias_conditions.append(Job.title.ilike(token_pat, escape="\\"))
+
     # Also search the job_skills table for skill matches
     skill_aliases = _get_skill_aliases(query)
     skill_conditions = []
     for skill_alias in skill_aliases:
         skill_conditions.append(func.lower(JobSkill.skill).like(f"%{_escape_like(skill_alias)}%", escape="\\"))
+    # Also check individual tokens against job_skills
+    if len(tokens) > 1:
+        for token in tokens:
+            if len(token) >= 2:
+                skill_conditions.append(
+                    func.lower(JobSkill.skill).like(f"%{_escape_like(token)}%", escape="\\")
+                )
 
     return alias_conditions, skill_conditions
 
@@ -426,9 +488,17 @@ def _check_skill_match(job_id, db: Session, skill_aliases: set[str]) -> list[Mat
 
 
 def _compute_lexical_score(
-    match_type: str, num_evidence: int, matched_fields: list[str]
+    match_type: str, num_evidence: int, matched_fields: list[str],
+    query_tokens: int = 1,
 ) -> float:
-    """Compute a search relevance score based on lexical evidence quality."""
+    """Compute a search relevance score based on lexical evidence quality.
+
+    Scores are higher when:
+      - Match type is more specific (title > skill > requirement > description)
+      - Multiple evidence fields match
+      - More evidence pieces found
+      - Multi-token queries have multiple tokens matched
+    """
     base_scores = {
         "exact_title": 95.0,
         "exact_skill": 85.0,
@@ -444,6 +514,12 @@ def _compute_lexical_score(
         score = min(score + 5, 100.0)
     elif unique_fields >= 2:
         score = min(score + 2, 100.0)
+
+    # Bonus for high evidence count (diminishing returns)
+    if num_evidence >= 5:
+        score = min(score + 3, 100.0)
+    elif num_evidence >= 3:
+        score = min(score + 1, 100.0)
 
     return score
 
@@ -711,14 +787,36 @@ def evidence_search(
     limit: int = 20,
     min_semantic_results: int = EVIDENCE_MIN_RESULTS,
     enable_semantic_fallback: bool = True,
+    rerank: bool = False,
+    llm_rerank: bool = False,
+    profile_text: str | None = None,
 ) -> list[dict]:
     """Short/technical queries need real lexical evidence (title, skills, requirements,
     description) before we show a result; only fall back to semantic similarity if there
     aren't enough matches, and label those clearly as semantic_fallback. Longer
-    natural-language queries skip straight to semantic search."""
+    natural-language queries skip straight to semantic search.
+
+    AI pipeline enhancements:
+      - Query understanding: classifies intent and expands terms via LLM
+      - Cross-encoder reranking: when rerank=True, re-ranks with cross-encoder
+      - LLM re-scoring: when llm_rerank=True, re-scores with full profile context
+    """
     query_clean = _normalise_query(query)
     if not query_clean:
         return []
+
+    # ── AI Pipeline 1: Query Understanding ──
+    expanded_terms = [query_clean]
+    try:
+        from app.services.query_understanding import analyse_query
+        analysis = analyse_query(query)
+        if analysis.expanded_terms:
+            expanded_terms.extend(
+                t for t in analysis.expanded_terms
+                if t not in expanded_terms
+            )
+    except Exception as e:
+        logger.debug(f"Query understanding unavailable: {e}")
 
     is_tech = _is_technical_query(query)
 
@@ -726,11 +824,24 @@ def evidence_search(
         # Long natural-language query: use semantic search directly
         semantic_results = _semantic_search_with_evidence(db, query, limit)
         semantic_results = _collapse_dict_duplicates(semantic_results, db)
-        return _filter_dicts_by_quality(db, semantic_results)
+        results = _filter_dicts_by_quality(db, semantic_results)
+        # Apply reranking if requested
+        if rerank and results:
+            results = _apply_cross_encoder_rerank(query, results, limit)
+        if llm_rerank and results and profile_text:
+            results = _apply_llm_rerank(profile_text, results, limit)
+        return results
 
     # ── Stage 1: Lexical evidence retrieval ──
-    aliases = _get_aliases(query)
-    skill_aliases = _get_skill_aliases(query)
+    # Use expanded terms for broader matching
+    all_aliases = []
+    all_skill_aliases = set()
+    for term in expanded_terms:
+        all_aliases.extend(_get_aliases(term))
+        all_skill_aliases.update(_get_skill_aliases(term))
+    # Deduplicate aliases while preserving order
+    aliases = list(dict.fromkeys(all_aliases))
+    skill_aliases = all_skill_aliases
 
     alias_conditions, skill_conditions = _build_lexical_evidence_query(query)
 
@@ -792,7 +903,8 @@ def evidence_search(
             continue
 
         # Compute relevance score
-        relevance = _compute_lexical_score(match_type, len(evidence), matched_fields)
+        query_tokens = len(query_clean.split())
+        relevance = _compute_lexical_score(match_type, len(evidence), matched_fields, query_tokens)
 
         sr = SearchResult(
             id=str(job.id),
@@ -877,7 +989,59 @@ def evidence_search(
     # Filter out low-quality jobs
     results = _filter_by_quality(db, results)
 
-    return [r.to_dict() for r in results]
+    result_dicts = [r.to_dict() for r in results]
+
+    # ── AI Pipeline 2: Cross-encoder reranking ──
+    if rerank and result_dicts:
+        result_dicts = _apply_cross_encoder_rerank(query, result_dicts, limit)
+
+    # ── AI Pipeline 3: LLM re-scoring ──
+    if llm_rerank and result_dicts and profile_text:
+        result_dicts = _apply_llm_rerank(profile_text, result_dicts, limit)
+
+    return result_dicts
+
+
+def _apply_cross_encoder_rerank(query: str, results: list[dict], limit: int) -> list[dict]:
+    """Apply cross-encoder reranking to search results. Blends 70% original + 30% rerank."""
+    try:
+        from app.services.reranker import rerank_candidates, is_reranker_available
+        if not is_reranker_available() or len(results) <= 5:
+            return results
+
+        # Enrich with skills for better reranking
+        job_ids = [r["id"] for r in results]
+        # Skills should already be in the results if available, otherwise skip
+        reranked = rerank_candidates(query, results, top_n=limit)
+
+        for r in reranked:
+            if "rerank_score" in r:
+                # Normalize cross-encoder score (-10 to 10) to 0-1
+                normalized_rerank = max(0.0, min(1.0, (r["rerank_score"] + 10) / 20))
+                original = r.get("search_relevance_score", r.get("ranking_score", 50)) / 100.0
+                blended = 0.7 * original + 0.3 * normalized_rerank
+                r["ranking_score"] = round(blended * 100, 1)
+                r["search_relevance_score"] = r["ranking_score"]
+
+        return reranked
+    except Exception as e:
+        logger.debug(f"Cross-encoder reranking unavailable: {e}")
+        return results
+
+
+def _apply_llm_rerank(profile_text: str, results: list[dict], limit: int) -> list[dict]:
+    """Apply LLM-based re-scoring to search results. Blends original + LLM scores."""
+    try:
+        from app.services.llm_reranker import llm_rerank
+        return llm_rerank(
+            profile_text=profile_text,
+            candidates=results,
+            top_n=limit,
+            blend_weight=0.4,
+        )
+    except Exception as e:
+        logger.debug(f"LLM reranking unavailable: {e}")
+        return results
 
 
 def _semantic_search_with_evidence(

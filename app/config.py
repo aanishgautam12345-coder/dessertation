@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # Dedicated notification scheduler process
     scheduler_enabled: bool = False
     scheduler_timezone: str = "UTC"
-    scheduler_instant_interval_minutes: int = 15
+    scheduler_instant_interval_minutes: int = 5
     scheduler_daily_time: str = "09:00"
     scheduler_weekly_day: str = "mon"
     scheduler_weekly_time: str = "09:00"

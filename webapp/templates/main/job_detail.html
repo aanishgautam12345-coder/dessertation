@@ -86,29 +86,29 @@
             <div class="li-card p-6 mt-4">
                 <h2 class="text-base font-semibold text-[#000000e6] mb-3">Match breakdown</h2>
                 <div class="grid grid-cols-3 sm:grid-cols-6 gap-4 text-center">
-                    <div>
-                        <div class="text-xs text-[#999589]">Semantic</div>
-                        <div class="text-lg font-bold text-[#000000e6]">{{ breakdown.semantic_similarity }}%</div>
+                    <div class="min-w-0">
+                        <div class="text-xs text-[#999589] truncate">Semantic</div>
+                        <div class="text-lg font-bold text-[#000000e6]">{{ (breakdown.semantic_similarity * 100)|round(0, 'floor')|int }}%</div>
                     </div>
-                    <div>
-                        <div class="text-xs text-[#999589]">Skills</div>
-                        <div class="text-lg font-bold text-[#000000e6]">{{ breakdown.skill_overlap }}%</div>
+                    <div class="min-w-0">
+                        <div class="text-xs text-[#999589] truncate">Skills</div>
+                        <div class="text-lg font-bold text-[#000000e6]">{{ (breakdown.skill_overlap * 100)|round(0, 'floor')|int }}%</div>
                     </div>
-                    <div>
-                        <div class="text-xs text-[#999589]">Location</div>
-                        <div class="text-lg font-bold text-[#000000e6]">{{ breakdown.location_fit }}%</div>
+                    <div class="min-w-0">
+                        <div class="text-xs text-[#999589] truncate">Location</div>
+                        <div class="text-lg font-bold text-[#000000e6]">{{ (breakdown.location_fit * 100)|round(0, 'floor')|int }}%</div>
                     </div>
-                    <div>
-                        <div class="text-xs text-[#999589]">Salary</div>
-                        <div class="text-lg font-bold text-[#000000e6]">{{ breakdown.salary_fit }}%</div>
+                    <div class="min-w-0">
+                        <div class="text-xs text-[#999589] truncate">Salary</div>
+                        <div class="text-lg font-bold text-[#000000e6]">{{ (breakdown.salary_fit * 100)|round(0, 'floor')|int }}%</div>
                     </div>
-                    <div>
-                        <div class="text-xs text-[#999589]">Experience</div>
-                        <div class="text-lg font-bold text-[#000000e6]">{{ breakdown.experience_fit }}%</div>
+                    <div class="min-w-0">
+                        <div class="text-xs text-[#999589] truncate">Experience</div>
+                        <div class="text-lg font-bold text-[#000000e6]">{{ (breakdown.experience_fit * 100)|round(0, 'floor')|int }}%</div>
                     </div>
-                    <div>
-                        <div class="text-xs text-[#999589]">Type</div>
-                        <div class="text-lg font-bold text-[#000000e6]">{{ breakdown.job_type_fit }}%</div>
+                    <div class="min-w-0">
+                        <div class="text-xs text-[#999589] truncate">Type</div>
+                        <div class="text-lg font-bold text-[#000000e6]">{{ (breakdown.job_type_fit * 100)|round(0, 'floor')|int }}%</div>
                     </div>
                 </div>
                 {% if matching_skills %}
